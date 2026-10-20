@@ -27,6 +27,12 @@ pub struct Field {
     pub hash: Option<Vec<u8>>,
 }
 
+/// Field names that carry readable content, as opposed to signatures, identities, or tool metadata.
+fn semantic_path(path:&str) -> bool {
+    matches!(path.rsplit('/').next().unwrap_or_default(),
+        "text"|"thinking"|"output"|"content"|"prompt"|"data"|"arguments"|"diff"|"unified_diff"|"unifiedDiff"|"delta"|"aggregated_output"|"aggregatedOutput")
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Checkpoint {
     pub record_start: u64,
@@ -120,73 +126,21 @@ impl<R: Read> Projector<R> {
         let mut parser=Self::new(reader,offset);parser.document=true;parser
     }
 
-    pub fn offset(&self) -> u64 { self.offset }
+    #[cfg(test)] pub fn offset(&self) -> u64 { self.offset }
 
     fn reset(&mut self) {
         self.record_start=self.offset;self.fields.clear();self.nodes=0;self.preview_bytes=0;
         self.metadata_bytes=0;self.semantic_bytes=0;self.classification_bytes=0;self.key_bytes=0;self.capture=None;
     }
 
-    /// Visit a top-level array one element at a time without retaining the document's history.
-    pub fn split_object_array(&mut self,name:&str,sink:&mut impl FnMut(Checkpoint)->Result<(),String>,
-        visit:&mut impl FnMut(Record)->Result<(),String>) -> Result<Record,String> {
-        self.split_document_array(&format!("/{}",name.replace('~',"~0").replace('/',"~1")),sink,visit)
-    }
-
-    /// A nested native metadata array has the same per-element limits. Paths are internal schema
-    /// constants; clients never supply a JSON pointer to this parser or to a source-range reader.
-    pub fn split_document_array(&mut self,target:&str,sink:&mut impl FnMut(Checkpoint)->Result<(),String>,
-        visit:&mut impl FnMut(Record)->Result<(),String>) -> Result<Record,String> {
-        if !target.starts_with('/') || target.len()>MAX_KEY_BYTES*4 {return Err("unsupported_record: invalid history array schema path".into());}
-        self.document=true;self.reset();let start=self.offset;let mut found=false;
-        let value=self.split_value("",0,target,&mut found,sink,visit)?;self.space()?;
-        if self.peek()?.is_some() {return Err("Trailing JSON content".into());}
-        if !found {return Err("unsupported_record: history array is unavailable".into());}
-        Ok(Record {start,end:self.offset,value,fields:std::mem::take(&mut self.fields),error:None,complete:true})
-    }
-
-    fn split_value(&mut self,path:&str,depth:usize,target:&str,found:&mut bool,sink:&mut impl FnMut(Checkpoint)->Result<(),String>,
-        visit:&mut impl FnMut(Record)->Result<(),String>) -> Result<Value,String> {
-        if depth>MAX_DEPTH || self.nodes>=MAX_NODES {return Err("unsupported_record: JSON structure exceeds the projection budget".into());}
-        self.space()?;
-        if path==target {
-            if *found {return Err("unsupported_record: duplicate history array".into());}*found=true;
-            let fields=std::mem::take(&mut self.fields);
-            let state=(self.record_start,self.nodes,self.preview_bytes,self.metadata_bytes,self.semantic_bytes,self.classification_bytes,self.key_bytes);
-            self.expect(b'[')?;self.space()?;
-            if self.peek()?!=Some(b']') {
-                loop {
-                    self.reset();let start=self.offset;let value=self.value("",0,sink)?;
-                    visit(Record {start,end:self.offset,value,fields:std::mem::take(&mut self.fields),error:None,complete:true})?;
-                    self.space()?;if self.peek()?!=Some(b',') {break;}self.byte()?;self.space()?;
-                }
-            }
-            self.expect(b']')?;self.fields=fields;
-            (self.record_start,self.nodes,self.preview_bytes,self.metadata_bytes,self.semantic_bytes,self.classification_bytes,self.key_bytes)=state;
-            return Ok(Value::Array(Vec::new()));
-        }
-        if !target.starts_with(&(path.to_owned()+"/")) {return self.value(path,depth,sink);}
-        self.nodes+=1;let start=self.offset;self.expect(b'{')?;self.space()?;let mut object=Map::new();
-        if self.peek()?!=Some(b'}') {
-            loop {
-                let (key,_)=self.string(path,true,sink)?;self.space()?;self.expect(b':')?;
-                let child=format!("{path}/{}",key.replace('~',"~0").replace('/',"~1"));
-                if object.contains_key(&key) && (target==child || target.starts_with(&(child.clone()+"/"))) {
-                    return Err("unsupported_record: duplicate history array container".into());
-                }
-                object.insert(key,self.split_value(&child,depth+1,target,found,sink,visit)?);
-                self.space()?;if self.peek()?!=Some(b',') {break;}self.byte()?;self.space()?;
-            }
-        }
-        self.expect(b'}')?;
-        if self.fields.len()>=MAX_FIELDS {return Err("unsupported_record: too many JSON fields".into());}
-        self.fields.push(Field {path:path.into(),start,end:self.offset,decoded_bytes:self.offset-start,truncated:self.offset-start>PREVIEW_BYTES as u64,encoding:"json".into(),hash:None});
-        Ok(Value::Object(object))
-    }
-
     fn peek(&mut self) -> Result<Option<u8>, String> {
         if self.at == self.filled {
-            self.filled = self.reader.read(&mut self.buffer).map_err(|e| format!("History read failed: {e}"))?;
+            self.filled = self.reader.read(&mut self.buffer).map_err(|error| {
+                // A reader that verifies what it returns reports a stable code; keep it for the caller.
+                let error=error.to_string();
+                if ["source_changed:","detail_unavailable:","index_incomplete:","read_canceled"].iter().any(|code|error.starts_with(code)) {error}
+                else {format!("History read failed: {error}")}
+            })?;
             self.at = 0;
         }
         Ok((self.at < self.filled).then(|| self.buffer[self.at]))
@@ -417,8 +371,7 @@ impl<R: Read> Projector<R> {
         // Classification and identity can follow an arbitrary number of large payload fields. Reserve
         // their own bounded budget so field order never turns a valid type/id into an empty preview.
         let metadata=!key && identity_path(path);
-        let semantic=!key && matches!(path.rsplit('/').next().unwrap_or_default(),
-            "text"|"thinking"|"output"|"content"|"prompt"|"data"|"arguments"|"diff"|"unified_diff"|"unifiedDiff"|"delta"|"aggregated_output"|"aggregatedOutput");
+        let semantic=!key && semantic_path(path);
         let limit=if key {MAX_KEY_BYTES} else if metadata {MAX_KEY_BYTES.min((64*1024usize).saturating_sub(self.metadata_bytes))}
             else if semantic {PREVIEW_BYTES.min((RECORD_PREVIEW_BYTES/2-MAX_FIELDS*4-4096).saturating_sub(self.semantic_bytes))}
             else {PREVIEW_BYTES.min((RECORD_PREVIEW_BYTES/2).saturating_sub(self.preview_bytes))};

@@ -287,6 +287,8 @@ export interface SearchMatch {
   timestamp?: string | null;
   /** Transcript message index used as a scroll anchor; null for recordings. */
   messageIndex: number | null;
+  /** Byte offset of the message's first record in its transcript file, which locates it exactly. */
+  recordOffset?: number;
   /**
    * One-based match number within a transcript message or across the recording (the required findNext count).
    */
@@ -335,6 +337,8 @@ export interface ContentSearchPage {
   status: "pending" | "complete";
   scannedSessions: number;
   scannedBytes: number;
+  /** Sessions not brought up to date in time; their newest content may be missing from the results. */
+  pendingSessions?: number;
   hits?: SessionSearchHit[];
   totalSessions?: number;
   totalMatches?: number;
@@ -566,11 +570,6 @@ export interface WorktreeEntry {
 /** Lists all worktrees including main; non-repositories error so callers can use an empty list. */
 export function listWorktrees(repoRoot: string): Promise<WorktreeEntry[]> {
   return invoke<WorktreeEntry[]>("list_worktrees", { repoRoot });
-}
-
-/** Lists worktrees associated with a session and descendants for deletion confirmation. */
-export function worktreesInSubtree(sessionId: string): Promise<string[]> {
-  return invoke<string[]>("worktrees_in_subtree", { sessionId });
 }
 
 /** Removes a worktree directory; force allows removal with local changes. */

@@ -95,7 +95,6 @@ pub(super) fn observe(app:&AppCtx,session:&str,proc:&Arc<ChatProcess>,params:&Va
     targets.insert(row.clone(),super::super::history::RewindTarget {
         message_id:native.into(),last_message_id:None,turn_id:Some(turn.into()),text:String::new(),
     });drop(targets);
-    bounded::identity(app,session,proc,&row,native,turn);
 }
 
 #[cfg(test)]

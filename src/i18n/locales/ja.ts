@@ -22,6 +22,8 @@ const ja: typeof en = {
   "translation.title": "翻訳",
   "translation.enable": "翻訳を有効にする",
   "translation.visibility": "この機能を有効にすると、会話に翻訳用の操作が表示されます。",
+  "translation.defaultEnabled": "翻訳を初期設定で有効にする",
+  "translation.defaultEnabledHint": "翻訳設定を個別に保存していない会話に適用されます。変更は自動的に保存されます。",
   "translation.conversationKinds": "翻訳を使用するエージェントの種類",
   "translation.conversationKindsHint": "選択した種類のエージェントとの会話でのみ、翻訳の操作と自動翻訳が有効になります。変更は自動的に保存されます。",
   "translation.chooseConversationKinds": "エージェントの種類を選択",
@@ -1249,8 +1251,6 @@ const ja: typeof en = {
     `グループ「${name}」を削除しますか？配下のサブグループとセッションもすべて削除されます。この操作は取り消せません。`, // Delete group "{name}"?…
   "tree.deleteSessionBody": (name) =>
     `セッション「${name}」（およびすべての子セッション）を削除しますか？この操作は取り消せません。`, // Delete session "{name}"…
-  "tree.deleteWorktrees": (n) =>
-    `関連する git worktree も削除する（計 ${n} 件。作業ツリーに変更があると削除に失敗することがあります）`, // Also remove associated git worktrees…
 
   // Session information dialog
   "info.name": "名前", // Name
@@ -1299,9 +1299,9 @@ const ja: typeof en = {
     "このプロジェクトには利用可能な git リポジトリのパスがありません。", // This project has no usable git repository path.
   // ── Worktree selector for custom session creation ──
   "worktreeSel.label": "Worktree",
-  "worktreeSel.modeNone": "なし", // None
-  "worktreeSel.modeNew": "新規", // New
-  "worktreeSel.modeExisting": "既存", // Existing
+  "worktreeSel.modeNone": "使用しない", // None
+  "worktreeSel.modeNew": "新規作成", // New
+  "worktreeSel.modeExisting": "既存を選択", // Existing
   "worktreeSel.loading": "worktree を読み込み中…", // Loading worktrees…
   "worktreeSel.empty": "このリポジトリには既存の worktree がありません。", // No existing worktrees in this repository.
   "worktreeSel.loadFailed":
@@ -1351,6 +1351,7 @@ const ja: typeof en = {
   "search.backToResults": "結果に戻る", // Back to results
   "search.archivedBadge": "アーカイブ済み", // Archived
   "search.summary": (m, s) => `${m} 件の一致 · ${s} 件のセッション`, // X matches · N sessions
+  "search.pending": (n) => `${n} 件のセッションがまだインデックス作成中のため、結果が一部欠けている可能性があります。`, // N sessions are still being indexed, so results may be incomplete
   "search.matchPosition": (n, total) => `${n} / ${total}`, // N of M
   "search.roleTerminal": "ターミナル", // Terminal
   "search.collapseGroup": "折りたたむ", // Collapse
@@ -1758,6 +1759,10 @@ const ja: typeof en = {
   "mobile.empty2":
     "デスクトップ版か PC ブラウザで作成すると、ここに自動で表示されます。", // Create one on the desktop app or a computer browser…
   "mobile.back": "‹ 戻る", // ‹ Back
+  "mobile.tuiSuggest": "このセッションはターミナルビューで動作しています。スマートフォンでは会話ビューのほうが使いやすくなります。", // This session runs in terminal view. Conversation view works better on a phone.
+  "mobile.tuiShareReadOnly": "このセッションはターミナルビューで動作しているため、ここでは閲覧のみで返信はできません。続けるには会話ビューに切り替えてください。", // This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.
+  "mobile.tuiShareHost": "このセッションはターミナルビューで動作しているため、ここでは閲覧のみで返信はできません。ホストの所有者が会話ビューに切り替えることができます。", // This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.
+  "mobile.switchToConversation": "会話ビューに切り替える", // Switch to conversation view
   "mobile.selCopy": "コピー", // Copy
   "mobile.selCancel": "キャンセル", // Cancel
 
@@ -1979,6 +1984,8 @@ const ja: typeof en = {
   "session.switchBody": "進行中のターンは中断されます。会話の内容は残ります。",
   "session.switchBodyBackground": "エージェントが開始したバックグラウンドタスクは停止する場合があり、終了してもエージェントには通知されません。会話の内容は残ります。",
   "session.switchConfirm": "切り替える",
+  "session.switchBodyIdle": "ターミナルのエージェントは停止し、会話ビューで続行します。会話の内容は残ります。", // The agent in the terminal stops and continues in conversation view. Your conversation is kept.
+  "session.switchDesktopNote": "デスクトップ版でも、このセッションは会話ビューに切り替わります。", // The desktop app will also show this session in conversation view.
   "session.terminalViewHint": "ここをクリックすると、ターミナルビューに戻れます。",
   "session.loading": "会話を読み込んでいます…",
   "session.unavailable": "この会話はまだ読み取れません",

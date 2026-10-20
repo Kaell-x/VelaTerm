@@ -22,6 +22,8 @@ const zhCN: typeof en = {
   "translation.title": "翻译",
   "translation.enable": "启用翻译",
   "translation.visibility": "仅在启用此功能后，会话中才会显示翻译控件。",
+  "translation.defaultEnabled": "默认开启翻译",
+  "translation.defaultEnabledHint": "未单独保存翻译设置的会话将使用此默认值。更改会自动保存。",
   "translation.conversationKinds": "适用的智能体类型",
   "translation.conversationKindsHint": "仅在所选智能体类型的会话中显示翻译控件并启用自动翻译。更改会自动保存。",
   "translation.chooseConversationKinds": "请选择智能体类型",
@@ -1229,8 +1231,6 @@ const zhCN: typeof en = {
     `确认删除分组「${name}」，其下所有子分组与会话也会一并删除。此操作不可撤销。`,
   "tree.deleteSessionBody": (name) =>
     `确认删除会话「${name}」（及其下所有子会话）。此操作不可撤销。`,
-  "tree.deleteWorktrees": (n) =>
-    `同时删除关联的 git worktree（共 ${n} 个；工作区有改动可能删除失败）`,
 
   // Session information dialog
   "info.name": "名称",
@@ -1277,9 +1277,9 @@ const zhCN: typeof en = {
   "worktree.noRepoRoot": "该项目没有可用的 git 仓库路径。",
   // ── Worktree selector for custom session creation ──
   "worktreeSel.label": "Worktree",
-  "worktreeSel.modeNone": "不挂",
+  "worktreeSel.modeNone": "不使用",
   "worktreeSel.modeNew": "新建",
-  "worktreeSel.modeExisting": "选已有",
+  "worktreeSel.modeExisting": "选择已有",
   "worktreeSel.loading": "正在加载 worktree…",
   "worktreeSel.empty": "该仓库没有已存在的 worktree。",
   "worktreeSel.loadFailed": "无法列出 worktree（不是 git 仓库？）。",
@@ -1325,6 +1325,7 @@ const zhCN: typeof en = {
   "search.backToResults": "返回结果",
   "search.archivedBadge": "已归档",
   "search.summary": (m, s) => `命中 ${m} 处 · ${s} 个会话`,
+  "search.pending": (n) => `还有 ${n} 个会话正在建立索引，结果可能不完整。`,
   "search.matchPosition": (n, total) => `第 ${n} / 共 ${total}`,
   "search.roleTerminal": "终端",
   "search.collapseGroup": "折叠",
@@ -1709,6 +1710,10 @@ const zhCN: typeof en = {
   "mobile.noMatch": "没有匹配的会话",
   "mobile.empty2": "在桌面应用或电脑浏览器中创建会话后，此处会自动显示。",
   "mobile.back": "‹ 返回",
+  "mobile.tuiSuggest": "此会话以终端视图运行。在手机上使用会话视图体验更好。",
+  "mobile.tuiShareReadOnly": "此会话以终端视图运行，在这里只能查看，无法回复。切换到会话视图后即可继续对话。",
+  "mobile.tuiShareHost": "此会话以终端视图运行，在这里只能查看，无法回复。主机所有者可以将它切换为会话视图。",
+  "mobile.switchToConversation": "切换到会话视图",
   "mobile.selCopy": "复制",
   "mobile.selCancel": "取消",
 
@@ -1929,6 +1934,8 @@ const zhCN: typeof en = {
   "session.switchBody": "当前进行中的回合会中断，对话内容不会丢失。",
   "session.switchBodyBackground": "智能体启动的后台任务可能会停止，任务结束时智能体也不会收到通知。对话内容不会丢失。",
   "session.switchConfirm": "切换",
+  "session.switchBodyIdle": "终端中的智能体会停止，并在会话视图中继续运行。对话内容不会丢失。",
+  "session.switchDesktopNote": "桌面应用中的这个会话也会切换为会话视图。",
   "session.terminalViewHint": "点击这里可切换回终端视图。",
   "session.loading": "正在读取对话…",
   "session.unavailable": "暂时无法读取该会话的对话内容",

@@ -33,6 +33,8 @@ export function TranslationSettingsSection() {
   const [draft, setDraft] = useState<TranslationConfig | null>(null);
   const dirty = useRef(false); const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  // Agent installations change outside the app and are not announced; read them again on open.
+  useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { if (value && !dirty.current) setDraft(value.config); }, [value]);
   const edit = (patch: Partial<TranslationConfig>) => { dirty.current = true; setNote(""); setDraft(prev => prev ? { ...prev, ...patch } : null); };
   const run = async (action: () => Promise<unknown>, success = "") => {
@@ -49,6 +51,8 @@ export function TranslationSettingsSection() {
     <div className="translation-card">
       <label className="translation-toggle"><span>{t("translation.enable")}</span><input type="checkbox" checked={value.config.enabled} disabled={busy} onChange={e => void run(() => invoke("translation_enable", { enabled: e.target.checked }))} /></label>
       <p className="translation-hint">{t("translation.visibility")}</p>
+      <label className="translation-toggle"><span>{t("translation.defaultEnabled")}</span><input type="checkbox" checked={value.config.defaultEnabled} disabled={busy} aria-describedby="translation-default-enabled-hint" onChange={e => void run(() => invoke("translation_set_default_enabled", { enabled: e.target.checked }))} /></label>
+      <p id="translation-default-enabled-hint" className="translation-hint">{t("translation.defaultEnabledHint")}</p>
       <Field as="div" label={t("translation.conversationKinds")} hint={t("translation.conversationKindsHint")}>
         <Select<SessionKind> multiple value={kinds} onChange={saveConversationKinds} width="100%" menuPortal
           options={value.conversationKinds.map(kind => ({ value: kind.id, label: kind.label, icon: <span aria-hidden="true" style={{ display: "inline-flex" }}>{kindIconEl(kind.id, 14)}</span> }))}

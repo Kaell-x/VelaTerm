@@ -15,7 +15,7 @@ beforeEach(() => {
   setLang("en"); vi.clearAllMocks(); window.history.replaceState(null, "", "/");
   mocks.save.mockResolvedValue(undefined); mocks.refresh.mockResolvedValue(undefined); mocks.copy.mockResolvedValue(undefined);
   mocks.state = { sessionId: "fixture", originals: [], refresh: mocks.refresh, save: mocks.save,
-    settings: { config: { enabled: true, conversationKinds: ["claude", "codex"], engine: "agent", agent: "codex", model: "fixture-model", effort: "", serviceId: "", version: 1, generation: 1, enabledSince: 0 }, editable: true, conversationKinds: [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }],
+    settings: { config: { enabled: true, defaultEnabled: true, conversationKinds: ["claude", "codex"], engine: "agent", agent: "codex", model: "fixture-model", effort: "", serviceId: "", version: 1, generation: 1, enabledSince: 0 }, editable: true, conversationKinds: [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }],
       agents: [{ id: "codex", label: "Codex", available: true, acceptsTask: true, supportsPlanExecute: true, supportsReferSummary: true, effortFlag: "model_reasoning_effort", effortLevels: [] }],
       services: [], languages: [{ code: "en", name: "English" }, { code: "de", name: "Deutsch" }], engines: ["agent", "api"], protocols: ["openai"], displays: ["original", "translation", "both", "immersive"] },
     value: { enabled: true, version: 1, generation: 1, preferences: { outgoing: true, replies: true, source: "auto", target: "en", replySource: "en", replyTarget: "de", display: "immersive", repliesSince: 0 }, replies: [], messages: [], pending: [] } };

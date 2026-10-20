@@ -553,6 +553,12 @@ pub fn error_code(error: &str) -> &'static str {
         .take(4096)
         .collect::<String>()
         .to_ascii_lowercase();
+    // History reads report a stable `code: detail` prefix; keep the code instead of a generic failure.
+    const HISTORY_CODES: [&str; 8] = ["detail_unavailable", "source_changed", "source_missing", "index_incomplete",
+        "unsupported_record", "cursor_expired", "detail_requires_paging", "index_busy"];
+    if let Some(code) = HISTORY_CODES.iter().find(|code| e.split(':').next() == Some(**code)) {
+        return code;
+    }
     if e.contains("model and effort must be identifiers") {
         "invalid_launch_identifier"
     } else if e.contains("timeout") || e.contains("timed out") {
@@ -1222,6 +1228,16 @@ mod tests {
             assert!(!line.contains("synthetic-secret"));
             assert!(!line.contains("private-image"));
         }
+    }
+    #[test]
+    fn history_failures_keep_their_stable_code() {
+        // A detail that mentions "not found" or "cancel" must not hide which history contract failed.
+        assert_eq!(error_code("detail_unavailable: history row is unavailable"), "detail_unavailable");
+        assert_eq!(error_code("index_busy: this task has no indexed parent association yet"), "index_busy");
+        assert_eq!(error_code("source_missing: original file not found"), "source_missing");
+        assert_eq!(error_code("Rows mention detail_unavailable: elsewhere"), "operation_failed");
+        let line = render("WARN", "rpc_failure", json!({"command":"chat_row","errorCode":error_code("detail_unavailable: history row is unavailable")}));
+        assert!(line.contains("detail_unavailable"));
     }
     #[test]
     fn filtered_metadata_survives_disk_roundtrip() {

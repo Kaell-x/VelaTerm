@@ -1,3 +1,26 @@
+## v0.2.12 — 2026-10-20
+
+- 🛑 Interromper um turno do Claude na visão de conversa tem efeito imediato, e a próxima mensagem é enviada na hora, mesmo quando o computador está muito sobrecarregado.
+- 🪟 Atalhos de menu como Cmd+D e cliques em notificações agem apenas na janela correspondente, então as janelas remotas não são mais divididas junto com a janela principal.
+- 🔎 A busca global retorna resultados enquanto a indexação ainda está em andamento e mostra quantas sessões ainda estão sendo indexadas.
+- ⚡ A busca global indexa as conversas do Claude, Codex, Pi e OMP diretamente dos arquivos, de forma muito mais rápida e sem encher o cache do histórico de conversas, e abrir um resultado leva exatamente à mensagem correspondente.
+- 🧠 O histórico de conversas é lido diretamente dos registros originais dos agentes, em vez de uma cópia separada no disco, e as pastas `chat-index` e `chat-spool` são removidas na inicialização para liberar espaço em disco.
+- 📱 No celular, sessões em execução na visão de terminal sugerem mudar para a visão de conversa; depois da confirmação, o aplicativo desktop também muda a sessão.
+- 👀 Conexões compartilhadas listam as sessões em execução na visão de terminal como somente leitura, e só o proprietário do host pode mudá-las para a visão de conversa.
+- 🌐 As configurações de tradução ganham “Ativar tradução por padrão”, que define o estado inicial da tradução nas sessões sem uma escolha salva.
+- 🌳 A árvore de sessões agrupa sob uma única linha de worktree as sessões que usam o mesmo worktree.
+- 📄 Respostas curtas na visão de conversa, inclusive mensagens com imagens, não exibem mais o link “Ler o conteúdo completo”.
+- 🔕 O botão que limpa todos os indicadores de notificação passou para a extremidade esquerda da barra inferior da árvore de sessões.
+- 🤖 As caixas de diálogo de nova sessão e de retomar sessão mostram o ícone de cada agente na lista de tipos de agente, e a lista de permissões abre para cima quando não há espaço suficiente abaixo.
+- 🩹 A visão de conversa não informa mais que o histórico contém registros corrompidos quando o armazenamento está ocupado, e continua carregando logo em seguida.
+- 📝 No editor de Markdown, Backspace e Shift+Tab removem a numeração de um item de lista vazio ou de um parágrafo sem numeração dentro de uma lista.
+- 🔵 O chip “Tarefas” na visão de conversa fica ciano, a cor que a árvore de sessões usa para trabalho em segundo plano, enquanto ainda houver tarefas em segundo plano em execução, e na lista de tarefas as que estão em execução também aparecem em ciano com o rótulo “Em execução”.
+- 🗑️ Excluir uma sessão não oferece mais a remoção de worktrees do git; para remover um, use “Delete worktree…”.
+- 🔁 O status da tradução é atualizado quando muda, e não mais a cada 10 segundos, e as configurações de tradução verificam novamente os agentes instalados sempre que são abertas.
+- 💤 O painel Info pausa a coleta de recursos do processo enquanto a janela está oculta.
+- ⏱️ O indicador de trabalho e o cronômetro do turno na visão de conversa não somem mais nem ficam visíveis indevidamente quando um turno começa ou termina enquanto você troca de sessão.
+- 🔗 `vrefer` numera as mensagens da mesma forma que `vsearch`, e nas sessões do Codex bifurcadas, `vrefer` e a busca global incluem o histórico da conversa de origem.
+
 ## v0.2.11 — 2026-10-18
 
 - 🧪 As prévias HTML experimentais abrem ao lado das conversas ou em abas, atualizam com as alterações dos arquivos e oferecem controles de código, console e versões; a validação nativa e entre plataformas ainda está pendente.

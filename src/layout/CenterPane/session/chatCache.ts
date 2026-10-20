@@ -105,6 +105,12 @@ export function reconcileChat(snapshot: ChatSnapshot, current: ChatRow[], events
   let result = { ...snapshot, rows: snapshot.pageKind === "delta" ? mergeRows(current, snapshot.rows) : snapshot.rows };
   for (const event of events) {
     if (event.type === "extras") { result = { ...result, auth: event.extras.auth }; continue; }
+    // A snapshot read just before a turn started or ended would otherwise put back the old turn clock:
+    // the pane then shows no working row for a turn still running, or keeps one for a turn that ended.
+    if (event.type === "turnStarted") { result = { ...result, turnStartedAt: event.startedAt }; continue; }
+    if (event.type === "turnCompleted") { result = { ...result, turnStartedAt: undefined }; continue; }
+    if (event.type === "process") { result = { ...result, running: true, pid: event.pid }; continue; }
+    if (event.type === "exited") { result = { ...result, running: false, turnStartedAt: undefined }; continue; }
     if (event.type !== "rows" && event.type !== "replaceRows" && event.type !== "queued" && event.type !== "reset") continue;
     const epoch = event.epoch ?? result.startedAt;
     if (epoch !== undefined && result.startedAt !== undefined && epoch < result.startedAt) continue;
@@ -112,7 +118,7 @@ export function reconcileChat(snapshot: ChatSnapshot, current: ChatRow[], events
       result = { ...result, userMessages: [], auth: undefined, startedAt: epoch, rows: [], queue: [], rowsRevision: 0, queueRevision: 0, hasMore: false };
     }
     if (event.type === "reset") {
-      result = { ...result, auth: undefined };
+      result = { ...result, auth: undefined, turnStartedAt: undefined };
       if (event.rows && (event.revision === undefined || event.revision > (result.rowsRevision ?? -1))) {
         result = { ...result, userMessages: event.userMessages ?? [], rows: event.rows, rowsRevision: event.revision, hasMore: event.hasMore ?? false };
       }

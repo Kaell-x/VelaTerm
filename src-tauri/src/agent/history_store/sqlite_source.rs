@@ -1,20 +1,19 @@
 //! Bounded, read-only projection over native SQLite TEXT/BLOB columns in one transaction snapshot.
 
-use std::io::{Read,Seek,SeekFrom};
+use std::io::Read;
 use std::path::Path;
 
 use rusqlite::{Connection,DatabaseName,OpenFlags,OptionalExtension};
 use sha2::{Digest,Sha256};
 
-use super::limits::CHECKPOINT_BYTES;
 use super::projection::{Checkpoint,Projector,Record};
 
 #[derive(Clone,Copy)]
-pub enum Entry {OpenCodeMessage,OpenCodePart,KiroConversation}
+pub enum Entry {OpenCodeMessage}
 impl Entry {
-    pub(super) fn table(self) -> &'static str {match self {Self::OpenCodeMessage=>"message",Self::OpenCodePart=>"part",Self::KiroConversation=>"conversations_v2"}}
-    pub(super) fn column(self) -> &'static str {match self {Self::KiroConversation=>"value",_=>"data"}}
-    fn scope(self) -> &'static str {match self {Self::KiroConversation=>"conversation_id",_=>"session_id"}}
+    pub(super) fn table(self) -> &'static str {"message"}
+    pub(super) fn column(self) -> &'static str {"data"}
+    fn scope(self) -> &'static str {"session_id"}
 }
 
 pub fn open(path:&Path) -> Result<Connection,String> {
@@ -39,7 +38,7 @@ impl<R:Read> Read for Hashed<R> {
     }
 }
 
-pub struct Projection {pub record:Record,pub hash:Vec<u8>,pub bytes:u64}
+pub struct Projection {pub record:Record}
 
 pub fn project(conn:&Connection,entry:Entry,rowid:i64,session:&str,sink:&mut impl FnMut(Checkpoint)->Result<(),String>) -> Result<Projection,String> {
     authorize(conn,entry,rowid,session)?;
@@ -51,21 +50,7 @@ pub fn project(conn:&Connection,entry:Entry,rowid:i64,session:&str,sink:&mut imp
     if record.error.is_none() && record.end!=size {return Err("unsupported_record: native history entry contains trailing records".into());}
     // Database commits are durable boundaries; they do not require a JSONL newline byte.
     record.complete=true;
-    Ok(Projection {record,hash:reader.hash.finalize().to_vec(),bytes:reader.bytes})
-}
-
-/// Return the same bounded bytes that were checked, while keeping ownership and the BLOB handle in the
-/// caller's read transaction. No path re-open or unrelated-session lookup occurs between check and read.
-pub fn range(conn:&Connection,entry:Entry,rowid:i64,session:&str,start:u64,end:u64,expected:&[u8]) -> Result<Vec<u8>,String> {
-    if end<start || end-start>(CHECKPOINT_BYTES+16) as u64 {return Err("History database range exceeds its byte budget".into());}
-    authorize(conn,entry,rowid,session)?;
-    let mut blob=conn.blob_open(DatabaseName::Main,entry.table(),entry.column(),rowid,true)
-        .map_err(|_|"source_changed: native database entry is unavailable")?;
-    if end>blob.len() as u64 {return Err("source_changed: native database entry was truncated".into());}
-    blob.seek(SeekFrom::Start(start)).map_err(|_|"cursor_expired: invalid database detail range")?;
-    let mut bytes=vec![0;(end-start) as usize];blob.read_exact(&mut bytes).map_err(|_|"source_changed: native database entry changed")?;
-    if Sha256::digest(&bytes).as_slice()!=expected {return Err("source_changed: native database detail revision changed".into());}
-    Ok(bytes)
+    Ok(Projection {record})
 }
 
 /// Message metadata and native identity are selected before touching any large part column.
@@ -110,13 +95,8 @@ mod tests {
         let mut checkpoints=Vec::new();let projected=project(&conn,Entry::OpenCodeMessage,1,"selected",&mut |checkpoint|{checkpoints.push(checkpoint);Ok(())}).unwrap();
         assert_eq!(projected.record.error,None);assert!(projected.record.complete);
         assert_eq!(projected.record.value["role"],"assistant");assert!(projected.record.value["unknown"].as_str().unwrap().len()<raw.len());
-        assert_eq!(projected.bytes,raw.len() as u64);assert_eq!(last_open_code_usage(&conn,"selected").unwrap()["modelID"],"native-model");
-        let checkpoint=&checkpoints[0];
-        let bytes=range(&conn,Entry::OpenCodeMessage,1,"selected",checkpoint.raw_start,checkpoint.raw_end,&checkpoint.hash).unwrap();
-        assert_eq!(super::super::projection::decode_checkpoint(&bytes).unwrap().len(),CHECKPOINT_BYTES);
+        assert!(!checkpoints.is_empty());assert_eq!(last_open_code_usage(&conn,"selected").unwrap()["modelID"],"native-model");
         assert!(project(&conn,Entry::OpenCodeMessage,1,"foreign",&mut |_|Ok(())).err().unwrap().contains("outside the selected session"));
-        conn.execute("UPDATE message SET data=?1",[raw.replace('x',"y")]).unwrap();
-        assert!(range(&conn,Entry::OpenCodeMessage,1,"selected",checkpoint.raw_start,checkpoint.raw_end,&checkpoint.hash).unwrap_err().starts_with("source_changed:"));
     }
 
     #[test]

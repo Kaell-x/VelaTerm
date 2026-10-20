@@ -34,7 +34,6 @@ use serde_json::{json, Value};
 
 mod antigravity;
 mod auth;
-mod bounded;
 mod claude_identity;
 mod codex;
 mod codex_identity;
@@ -43,8 +42,6 @@ mod opencode;
 mod outgoing_wire;
 mod permission_restart;
 mod pi;
-mod queued;
-mod runtime;
 
 use super::codex_protocol;
 use super::pi_protocol;
@@ -247,10 +244,6 @@ impl ChatRow {
 /// The rows of one conversation, in order, addressable by id.
 #[derive(Default)]
 struct Timeline {
-    bounded:bool,
-    retained_bytes:HashMap<String,usize>,
-    deferred_rows:HashSet<String>,
-    dropped_rows:usize,
     revision: u64,
     reset_revision: u64,
     row_versions: HashMap<String, u64>,
@@ -269,51 +262,7 @@ enum TimelineFlush {
 }
 
 impl Timeline {
-    fn bound_rows(&mut self,truncated:bool) {
-        if !self.bounded {return;}
-        for id in &self.dirty {if let Some(index)=self.at.get(id).copied() {
-            let row=&mut self.rows[index];
-            if runtime::summary(row) || truncated {self.deferred_rows.insert(id.clone());}
-            self.retained_bytes.insert(id.clone(),runtime::bytes(row));
-        }}
-        let mut bytes=self.retained_bytes.values().copied().sum::<usize>();let mut remove=0;
-        while remove<self.rows.len().saturating_sub(1) && (self.rows.len()-remove>runtime::ROWS || bytes>runtime::ROW_BYTES) {
-            let id=self.rows[remove].id();bytes=bytes.saturating_sub(self.retained_bytes.remove(id).unwrap_or_default());
-            self.deferred_rows.remove(id);self.row_versions.remove(id);remove+=1;
-        }
-        if remove>0 {
-            self.rows.drain(..remove);self.rows.shrink_to_fit();self.dropped_rows+=remove;self.at.clear();
-            for (index,row) in self.rows.iter().enumerate() {self.at.insert(row.id().into(),index);}
-            self.dirty.retain(|id|self.at.contains_key(id));
-        }
-    }
-
-    fn display(&self,row:&ChatRow) -> Value {
-        let mut value=snapshot_row(row);
-        if self.deferred_rows.contains(row.id()) {
-            value[if matches!(row,ChatRow::Tool {..}) {"detailAvailable"} else {"bodyAvailable"}]=json!(true);
-        }
-        if self.bounded {
-            let mut encoded=RowBytes {bytes:Vec::new(),limit:crate::agent::history_store::limits::PAGE_BYTES-32*1024};
-            if serde_json::to_writer(&mut encoded,&value).is_err() {
-                value=json!({"id":row.id(),"kind":"tool","name":"tool","input":{},"status":"running","isError":false,"detailAvailable":true,"children":[]});
-                if let ChatRow::Tool {name,status,is_error,..}=row {value["name"]=json!(name);value["status"]=json!(status);value["isError"]=json!(is_error);}
-            }
-        }value
-    }
-
-    fn wire_charge(&self,row:&ChatRow) -> usize {
-        let mut encoded=RowBytes {bytes:Vec::new(),limit:crate::agent::history_store::limits::PAGE_BYTES-16*1024};
-        if serde_json::to_writer(&mut encoded,&self.display(row)).is_err() {return crate::agent::history_store::limits::PAGE_BYTES;}
-        encoded.bytes.len()+serde_json::to_string(row.id()).unwrap().len()+64
-    }
-
-    fn wire_window(&self,rows:&[ChatRow]) -> Vec<Value> {
-        if !self.bounded {return rows.iter().map(snapshot_row).collect();}
-        let mut bytes=16*1024;let mut from=rows.len();
-        for row in rows.iter().rev() {let next=self.wire_charge(row);if bytes+next>crate::agent::history_store::limits::PAGE_BYTES {break;}bytes+=next;from-=1;}
-        rows[from..].iter().map(|row|self.display(row)).collect()
-    }
+    fn wire_window(&self,rows:&[ChatRow]) -> Vec<Value> {rows.iter().map(snapshot_row).collect()}
     fn restore_prefix(&mut self,mut history:Vec<ChatRow>) -> bool {
         if self.reset_revision!=0 {return false;}
         // Native rows already received in this process take precedence over the earlier snapshot.
@@ -481,9 +430,7 @@ impl Timeline {
         self.revision += 1;
         self.reset_revision = self.revision;
         self.row_versions.clear();
-        self.retained_bytes.clear();self.deferred_rows.clear();self.dropped_rows=0;
         self.replace_pending = true;
-        if self.bounded {self.dirty=self.rows.iter().map(|row|row.id().to_owned()).collect();self.bound_rows(false);}
     }
 
     /// Find a row where a frame with this parent would have put it: in the conversation, or inside the
@@ -598,14 +545,6 @@ impl Timeline {
     }
 
     fn take_dirty(&mut self) -> Vec<ChatRow> {
-        if self.bounded {
-            let mut bytes=16*1024;let mut count=0;
-            for id in &self.dirty {if let Some(row)=self.get(id) {
-                let next=self.wire_charge(row);if bytes+next>crate::agent::history_store::limits::PAGE_BYTES {break;}bytes+=next;
-            }count+=1;}
-            let ids=self.dirty.drain(..count).collect::<Vec<_>>();
-            return ids.iter().filter_map(|id|self.get(id).cloned()).collect();
-        }
         let ids = std::mem::take(&mut self.dirty);
         ids.iter()
             .filter_map(|id| self.at.get(id).map(|&i| self.rows[i].clone()))
@@ -662,7 +601,6 @@ pub struct QueuedMessage {
     pub text: String,
     /// Images attached to it, waiting along with the text.
     pub images: Vec<ChatImage>,
-    original:Option<Arc<queued::Original>>,
 }
 
 impl serde::Serialize for QueuedMessage {
@@ -671,11 +609,9 @@ impl serde::Serialize for QueuedMessage {
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("id", &self.id)?;
         map.serialize_entry("text", &self.text)?;
-        if let Some(original)=&self.original {map.serialize_entry("textDeferred",&original.text_deferred())?;map.serialize_entry("textRevision",&original.revision())?;}
         if self.images.is_empty() {
             // Events and reconnect snapshots use the same backend interpretation of shell context.
-            if let Some(command)=self.original.as_ref().and_then(|original|original.shell_command()) {map.serialize_entry("shellCommand",command)?;}
-            else if let Some(context) = super::shell::parse_context(&self.text) {
+            if let Some(context) = super::shell::parse_context(&self.text) {
                 map.serialize_entry("shellCommand", &context.command)?;
             }
         } else {
@@ -1043,17 +979,12 @@ struct ChatProcess {
     timeline: Mutex<Timeline>,
     /// Permission questions waiting for an answer, keyed by the agent's request id.
     permissions: Mutex<HashMap<String, Value>>,
-    /// Pinned original arguments used when an approval must echo the complete proposal.
-    permission_originals: Mutex<HashMap<String,bounded::Original>>,
-    outgoing:Mutex<Option<bounded::Outgoing>>,
-    bounded_protocol:bool,
     /// Native recording sizes captured before launch; rows past them belong to this process's timeline.
     history_cut:Option<crate::agent::history_store::api::ProcessCut>,
     /// Earlier rows are served as history pages instead of a restored timeline prefix.
     history_paged:AtomicBool,
     codex_client_ids:bool,
     codex_pending_user_ids:Mutex<HashMap<String,String>>,
-    runtime_originals:Mutex<HashMap<String,crate::agent::history_store::live::Frame>>,
     commands: Mutex<Vec<Value>>,
     /// Settings the agent accepts, so the composer can complete `/config`. Filled in the background.
     config_keys: Mutex<Vec<ConfigKey>>,
@@ -1177,6 +1108,14 @@ struct TurnQueue {
     /// Whether the running turn was stopped on purpose. The agent reports an interrupted turn as a failed
     /// one, and a failure the user asked for must not be drawn as an error.
     interrupted: bool,
+    /// Claude turns stopped locally whose `result` has not arrived yet.
+    ///
+    /// Stopping a Claude turn ends it here at once instead of waiting for the agent to confirm, so a reader
+    /// that falls behind cannot hold the session on working. Each stopped turn still reports exactly one
+    /// `result` — the aborted turn's, or the one already in the pipe when the agent had finished — and
+    /// that line belongs to the stopped turn, not to whatever started since. Frames before it belong to
+    /// the stopped turn too, so none of them may adopt a new turn.
+    stale_results: u32,
     /// Start of the running logical turn. Steering adds another user row but does not reset this clock.
     started_at: Option<u64>,
     /// When Claude began a request of its own while no turn was running, typically to answer a finished
@@ -1185,8 +1124,8 @@ struct TurnQueue {
 }
 
 impl ChatProcess {
-    /// Version 2 rows carry original references, or earlier rows arrive as history pages.
-    fn protocol_version(&self) -> u8 {if self.bounded_protocol || self.history_paged.load(Ordering::Relaxed) {2} else {1}}
+    /// Version 2 when earlier rows arrive as history pages in front of the live timeline.
+    fn protocol_version(&self) -> u8 {if self.history_paged.load(Ordering::Relaxed) {2} else {1}}
 
     /// Rows before this process remain to be paged in front of its live timeline.
     fn paged_history_exists(&self) -> bool {
@@ -1715,14 +1654,10 @@ impl ChatManager {
             child: Mutex::new(child),
             timeline: Mutex::new(Timeline::default()),
             permissions: Mutex::new(HashMap::new()),
-            permission_originals: Mutex::new(HashMap::new()),
-            outgoing:Mutex::new(None),
-            bounded_protocol:bounded::enabled(kind),
-            history_cut:history_cut.map(|cut|crate::agent::history_store::api::ProcessCut {epoch:started_at,..cut}),
+            history_cut,
             history_paged:AtomicBool::new(false),
             codex_client_ids:kind==SessionKind::Codex && codex_identity::supported(bin),
             codex_pending_user_ids:Mutex::new(HashMap::new()),
-            runtime_originals:Mutex::new(HashMap::new()),
             commands: Mutex::new(Vec::new()),
             config_keys: Mutex::new(Vec::new()),
             subagent_ids: Mutex::new(HashMap::new()),
@@ -1968,7 +1903,6 @@ impl ChatManager {
         if proc.kind == SessionKind::Antigravity {
             super::antigravity_protocol::validate(text, images.len(), behavior)?;
         }
-        if let Some(id)=message_id {bounded::proposal(app,session_id,proc,id,text,&images,false)?;}
         // Steering is a prompt, never a local command or a queued replacement.
         if proc.kind == SessionKind::Opencode && behavior != "steer" && proc.ready.load(Ordering::Relaxed) && opencode::is_local_command(text.trim()) {
             claim_native_writer(app,proc)?;
@@ -2001,11 +1935,8 @@ impl ChatManager {
                 id: message_id.map(str::to_owned).unwrap_or_else(|| format!("q-{}", proc.next_request.fetch_add(1, Ordering::Relaxed))),
                 text: text.to_string(),
                 images,
-                original:None,
             };
-            let item=queued::save(app,session_id,proc,item)?;
             let mut turn=proc.turn.lock().unwrap();
-            if proc.bounded_protocol {queued::reserve(&turn.waiting,&item,None)?;}
             *attempted = true;
             turn.waiting.push(item);
             drop(turn);
@@ -2019,11 +1950,8 @@ impl ChatManager {
                 id: message_id.map(str::to_owned).unwrap_or_else(|| format!("q-{}", proc.next_request.fetch_add(1, Ordering::Relaxed))),
                 text: text.to_string(),
                 images,
-                original:None,
             };
-            let item=queued::save(app,session_id,proc,item)?;
             let mut turn=proc.turn.lock().unwrap();
-            if proc.bounded_protocol {queued::reserve(&turn.waiting,&item,None)?;}
             // Interrupting means "do this instead of what you are doing", so this message goes ahead of
             // anything already waiting rather than behind it.
             *attempted = true;
@@ -2036,15 +1964,18 @@ impl ChatManager {
             // would leave a gap in which the turn ends on its own and sends this very message — and the
             // interrupt, arriving a moment later, would kill the turn it was meant to make room for.
             let stopped = if behavior == "interrupt" {
-                interrupt_locked(&proc, &mut turn)
+                interrupt_locked(app, &proc, &mut turn)
             } else {
-                Ok(())
+                Ok(None)
             };
             drop(turn);
             emit_queue(app, session_id, &proc);
             // The prompt is already queued even if stopping the previous turn failed.
             // An identified retry must not enqueue it again under a new identifier.
-            stopped?;
+            // A Claude turn ends as it is stopped, which sends this message now.
+            if let Some(end) = stopped? {
+                finish_turn_end(app, session_id, proc, "interrupted", None, end);
+            }
             start_waiting_message(app,session_id,proc);
             return Ok("queued");
         }
@@ -2089,8 +2020,7 @@ impl ChatManager {
             turn.steering = true;
             item
         };
-        let result = queued::materialize(&item,&proc.released)
-            .and_then(|input|dispatch_steer(app,session_id,&proc,&input.text,&input.images,Some(&input.id)));
+        let result = dispatch_steer(app,session_id,&proc,&item.text,&item.images,Some(&item.id));
         {
             let mut turn = proc.turn.lock().unwrap();
             turn.steering = false;
@@ -2127,9 +2057,9 @@ impl ChatManager {
     pub fn queue_read(&self,session:&str,id:&str,revision:Option<&str>,sequence:u64) -> Result<Value,String> {
         let proc=self.get(session)?;
         let item=proc.turn.lock().unwrap().waiting.iter().find(|item|item.id==id).cloned().ok_or("cursor_expired: this message is no longer queued")?;
-        let value=queued::piece(&item,revision,sequence,&proc.released)?;
+        let value=queue_piece(&item,revision,sequence)?;
         let queue=proc.turn.lock().unwrap();let current=queue.waiting.iter().find(|item|item.id==id).ok_or("cursor_expired: this message is no longer queued")?;
-        if current.original.as_ref().map(|original|original.revision())!=item.original.as_ref().map(|original|original.revision()) || current.text!=item.text {
+        if current.text!=item.text {
             return Err("source_changed: queued text was edited during this read".into());
         }Ok(value)
     }
@@ -2151,14 +2081,13 @@ impl ChatManager {
         }
         let previous=proc.turn.lock().unwrap().waiting.iter().find(|item|item.id==id).cloned();
         let Some(previous)=previous else {return Ok(());};
-        let input=queued::materialize(&previous,&proc.released)?;
+        let input=previous;
         // A delayed editor from another client must not rewrite completed execution facts.
         if input.images.is_empty() && super::shell::parse_context(&input.text).is_some() {return Ok(());}
-        let item=queued::save(app,session_id,&proc,QueuedMessage {id:id.into(),text:text.into(),images:input.images,original:None})?;
-        let complete=queued::materialize(&item,&proc.released)?;
+        let item=QueuedMessage {id:id.into(),text:text.into(),images:input.images};
+        let complete=item.clone();
         let mut turn=proc.turn.lock().unwrap();
         let Some(index)=turn.waiting.iter().position(|item|item.id==id) else {return Ok(());};
-        if proc.bounded_protocol {queued::reserve(&turn.waiting,&item,Some(id))?;}
         crate::agent::spawn_requests::edit_queued(app,session_id,id,text,&complete.images)?;
         crate::agent::translation::forget_queued(app,session_id,id)?;
         turn.waiting[index]=item;drop(turn);
@@ -2167,10 +2096,16 @@ impl ChatManager {
     }
 
     /// Stop the turn in progress. The conversation stays open.
-    pub fn interrupt(&self, session_id: &str) -> Result<(), String> {
+    pub fn interrupt(&self, app: &AppCtx, session_id: &str) -> Result<(), String> {
         let proc = self.get(session_id)?;
-        let mut turn = proc.turn.lock().unwrap();
-        interrupt_locked(&proc, &mut turn)
+        // Ending the turn can send the next queued message, so this is serialized with sends.
+        let _action = proc.action.lock().unwrap();
+        let _callbacks = proc.callbacks.read().unwrap();
+        let ended = interrupt_locked(app, &proc, &mut proc.turn.lock().unwrap())?;
+        if let Some(end) = ended {
+            finish_turn_end(app, session_id, &proc, "interrupted", None, end);
+        }
+        Ok(())
     }
 
     /// Read the current proposal without copying the conversation timeline or launching any IO.
@@ -2285,18 +2220,9 @@ impl ChatManager {
                 emit_state(app, session_id, AgentState::Working);
                 return Ok(());
             }
-            let original=proc.permission_originals.lock().unwrap().get(request_id).cloned();
-            if allow && updated_input.is_some() && original.as_ref().is_some_and(bounded::Original::is_partial) {
-                return Err("detail_requires_paging: complete tool arguments are required before editing the proposal".into());
-            }
-            if allow && updated_input.is_none() && original.is_some() {
-                bounded::respond_original(&proc,request_id,original.as_ref().unwrap(),updated_permissions.as_ref())?;
-            } else {
-                let input = updated_input.unwrap_or_else(|| request.get("input").cloned().unwrap_or(Value::Null));
-                proc.write(&protocol::permission_response(request_id,allow,input,message,updated_permissions))?;
-            }
+            let input = updated_input.unwrap_or_else(|| request.get("input").cloned().unwrap_or(Value::Null));
+            proc.write(&protocol::permission_response(request_id,allow,input,message,updated_permissions))?;
             proc.permissions.lock().unwrap().remove(request_id);
-            proc.permission_originals.lock().unwrap().remove(request_id);
             emit(app, session_id, json!({"type":"permissionResolved","id":request_id}));
             emit_state(app, session_id, AgentState::Working);
             Ok(())
@@ -2759,7 +2685,6 @@ impl ChatManager {
     /// Everything a client needs to render the conversation from scratch.
     pub fn row_detail(&self, session_id: &str, row_id: &str, epoch: Option<u64>) -> Result<Value, String> {
         let proc = self.get(session_id)?;
-        if proc.bounded_protocol {return Err(crate::agent::history_store::compat::UPGRADE.into());}
         if epoch.is_some_and(|value| value != proc.started_at) { return Err("Chat history changed; synchronize the conversation again".into()); }
         let timeline = proc.timeline.lock().unwrap();
         let row = find_row(&timeline.rows, row_id).ok_or("Chat row is no longer available")?;
@@ -2772,8 +2697,7 @@ impl ChatManager {
         let proc=self.get(session).ok()?;
         if !proc.history_paged.load(Ordering::Relaxed) {return None;}
         let cut=proc.history_cut.clone()?;
-        let dropped=proc.timeline.lock().unwrap().dropped_rows;
-        Some(crate::agent::history_store::live_view::Live {cut,dropped,row_protocol:if proc.bounded_protocol {2} else {1}})
+        Some(crate::agent::history_store::live_view::Live {cut,dropped:0,row_protocol:1})
     }
 
     /// Retained live rows following `after`, or from the first retained row, oldest first within the
@@ -2783,13 +2707,10 @@ impl ChatManager {
         let timeline=proc.timeline.lock().unwrap();
         let start=match after {Some(id)=>*timeline.at.get(id)?+1,None=>0};
         let end=(start+SNAPSHOT_PAGE_ROWS).min(timeline.rows.len());
-        let mut bytes=16*1024;let mut rows=Vec::new();let mut positions=serde_json::Map::new();
+        let mut rows=Vec::new();let mut positions=serde_json::Map::new();
         for (offset,row) in timeline.rows[start..end].iter().enumerate() {
-            let charge=if timeline.bounded {timeline.wire_charge(row)} else {0};
-            if !rows.is_empty() && bytes+charge>crate::agent::history_store::limits::PAGE_BYTES {break;}
-            bytes+=charge;
-            positions.insert(row.id().into(),json!(timeline.dropped_rows+start+offset));
-            rows.push(if timeline.bounded {timeline.display(row)} else {snapshot_row(row)});
+            positions.insert(row.id().into(),json!(start+offset));
+            rows.push(snapshot_row(row));
         }
         let has_newer=start+rows.len()<timeline.rows.len();
         Some(json!({"rows":rows,"positions":positions,"hasNewer":has_newer,"rowsRevision":timeline.revision}))
@@ -2798,13 +2719,7 @@ impl ChatManager {
     pub fn decorate_runtime_snapshot(&self,session:&str,value:&mut Value) {
         let Ok(proc)=self.get(session) else {return;};
         if proc.protocol_version()!=2 {return;}
-        let timeline=proc.timeline.lock().unwrap();value["protocolVersion"]=json!(2);
-        if let Some(rows)=value["rows"].as_array_mut() {for row in rows {
-            if let Some(id)=row["id"].as_str() {if timeline.deferred_rows.contains(id) {
-                let key=if row["kind"]=="tool" {"detailAvailable"} else {"bodyAvailable"};row[key]=json!(true);
-            }}
-        }}
-        if timeline.dropped_rows>0 {value["hasMore"]=json!(true);}
+        value["protocolVersion"]=json!(2);
     }
 
     /// The command a background shell task runs and the tail of what it has printed so far.
@@ -2915,7 +2830,7 @@ impl ChatManager {
                 start = window.and_then(|w| w.from.as_ref()).and_then(|id| timeline.at.get(id)).copied().unwrap_or(start);
                 timeline.rows[start..].iter().filter(|row| timeline.row_versions.get(row.id()).copied().unwrap_or(0) > since).cloned().collect()
             } else { timeline.rows[start..end].to_vec() };
-            let positions = selected.iter().filter_map(|row| timeline.at.get(row.id()).map(|index| (row.id().to_owned(), timeline.dropped_rows + *index))).collect();
+            let positions = selected.iter().filter_map(|row| timeline.at.get(row.id()).map(|index| (row.id().to_owned(), *index))).collect();
             let user_messages = if kind == "history" { None } else { Some(super::user_messages::outline(&timeline.rows)) };
             (selected, positions, timeline.revision, kind, start > 0, total, user_messages)
             }
@@ -2975,12 +2890,6 @@ impl ChatManager {
     /// the caller no way to read arbitrary files. A stale reference fails cleanly after its row is gone.
     pub fn attachment(&self, session_id: &str, attachment_id: &str) -> Result<ChatImage, String> {
         let proc = self.get(session_id)?;
-        if proc.bounded_protocol {if let Some((row,index))=attachment_id.strip_prefix("row:").and_then(|id|id.rsplit_once(':')) {
-            let index:usize=index.parse().map_err(|_|"detail_unavailable: attachment index is invalid")?;
-            let frame=proc.runtime_originals.lock().unwrap().get(row).cloned();
-            if let Some(frame)=frame {return queued::frame_image(&frame,row,index,&proc.released);}
-            return Err("detail_unavailable: the live attachment window has expired; refresh its history row".into());
-        }}
         {
             let timeline = proc.timeline.lock().unwrap();
             for row in &timeline.rows {
@@ -2993,7 +2902,7 @@ impl ChatManager {
         for item in &turn.waiting {
             for (index, image) in item.images.iter().enumerate() {
                 if queue_attachment_id(&item.id, index) == attachment_id {
-                    let _=image;return queued::image(item,index,&proc.released);
+                    return Ok(image.clone());
                 }
             }
         }
@@ -3689,10 +3598,8 @@ where
 
 fn snapshot_queue_item(item: &QueuedMessage) -> Value {
     let mut value = json!({"id":item.id,"text":item.text});
-    if let Some(original)=&item.original {value["textDeferred"]=json!(original.text_deferred());value["textRevision"]=json!(original.revision());}
     if item.images.is_empty() {
-        if let Some(command)=item.original.as_ref().and_then(|original|original.shell_command()) {value["shellCommand"]=json!(command);}
-        else if let Some(context)=super::shell::parse_context(&item.text) {value["shellCommand"]=json!(context.command);}
+        if let Some(context)=super::shell::parse_context(&item.text) {value["shellCommand"]=json!(context.command);}
     }
     if !item.images.is_empty() {
         value["images"] = Value::Array(
@@ -3909,7 +3816,7 @@ fn fork_codex_for_rewind(
 fn spawn_history_restore(app:AppCtx,session:String,proc:Arc<ChatProcess>,native:String) {
     std::thread::spawn(move|| {
         // Registration, pipe readers, and the provider handshake precede all historical IO.
-        if !proc.bounded_protocol {
+        {
             match super::history::replay(proc.kind,&native) {
                 Ok(rows)=>{
                     let _callback=proc.callbacks.read().unwrap();
@@ -3964,14 +3871,33 @@ fn announce_paged_history(app:&AppCtx,session:&str,proc:&Arc<ChatProcess>) {
     let wire=timeline.wire_window(rows);
     let first=rows.len()-wire.len();
     let positions=wire.iter().enumerate().filter_map(|(offset,row)|row["id"].as_str()
-        .map(|id|(id.to_owned(),json!(timeline.dropped_rows+start+first+offset)))).collect::<serde_json::Map<_,_>>();
-    let complete=timeline.dropped_rows==0 && start+first==0;
-    let protocol=if proc.bounded_protocol {2} else {1};
+        .map(|id|(id.to_owned(),json!(start+first+offset)))).collect::<serde_json::Map<_,_>>();
+    let complete=start+first==0;
+    let protocol=1;
     match crate::agent::history_store::live_view::compose(&head,wire,positions,complete,protocol) {
         Ok(value)=>emit(app,session,json!({"type":"reset","epoch":proc.started_at,"revision":timeline.revision,
-            "userMessages":super::user_messages::outline(&timeline.rows),"rows":value["rows"],"protocolVersion":protocol,
+            // Messages recorded before the launch come first on the rail.
+            "userMessages":head["userMessages"].as_array().cloned().unwrap_or_default().into_iter()
+                .chain(super::user_messages::outline(&timeline.rows).into_iter().filter_map(|message|serde_json::to_value(message).ok())).collect::<Vec<_>>(),
+            "rows":value["rows"],"protocolVersion":protocol,
             "positions":value["positions"],"hasMore":value["hasMore"]})),
         Err(message)=>emit(app,session,json!({"type":"historyReadError","message":message})),
+    }
+}
+
+/// One bounded piece of a waiting message's text, so a long draft is read without a page-sized frame.
+fn queue_piece(item:&QueuedMessage,expected:Option<&str>,sequence:u64) -> Result<Value,String> {
+    const PIECE:usize=crate::agent::history_store::limits::CHECKPOINT_BYTES;
+    if expected.is_some_and(|expected|expected!=item.id) {return Err("source_changed: queued text was edited".into());}
+    let mut start=0usize;let mut index=0u64;
+    loop {
+        let mut end=(start+PIECE).min(item.text.len());while !item.text.is_char_boundary(end) {end-=1;}
+        if index==sequence {
+            return Ok(json!({"id":item.id,"text":&item.text[start..end],"contentRevision":item.id,"chunkSequence":sequence,
+                "eof":end>=item.text.len(),"sizeBytes":item.text.len()}));
+        }
+        if end>=item.text.len() {return Err("cursor_expired: queued text cursor is outside this message".into());}
+        start=end;index+=1;
     }
 }
 
@@ -3995,17 +3921,11 @@ fn spawn_stdout_reader(
     stdout: std::process::ChildStdout,
 ) {
     std::thread::spawn(move || {
-        if proc.bounded_protocol {
-            if let Err(error)=bounded::receive(&app,&session_id,&proc,stdout) {
-                if error!="read_canceled" {emit(&app,&session_id,json!({"type":"error","message":error}));}
-            }
-        } else {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                let _callback = proc.callbacks.read().unwrap();
-                if !proc.released.load(Ordering::Relaxed) && app.chat().owns_process(&session_id,&proc) {
-                    handle_line(&app, &session_id, &proc, &line);
-                }
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            let _callback = proc.callbacks.read().unwrap();
+            if !proc.released.load(Ordering::Relaxed) && app.chat().owns_process(&session_id,&proc) {
+                handle_line(&app, &session_id, &proc, &line);
             }
         }
         auth::claude::exited(&app, &session_id, &proc);
@@ -4117,12 +4037,12 @@ fn reset_event(proc: &ChatProcess) -> Value {
     let start = timeline.rows.len().saturating_sub(SNAPSHOT_PAGE_ROWS);
     let rows = &timeline.rows[start..];
     let mut positions: HashMap<_, _> = rows.iter().enumerate()
-        .map(|(index, row)| (row.id(), timeline.dropped_rows + start + index)).collect();
+        .map(|(index, row)| (row.id(), start + index)).collect();
     let wire=timeline.wire_window(rows);positions.retain(|id,_|wire.iter().any(|row|row["id"].as_str()==Some(id)));
     json!({"type":"reset", "epoch":proc.started_at, "revision":timeline.revision,
         "userMessages":super::user_messages::outline(&timeline.rows),
-        "rows":wire,"protocolVersion":if proc.bounded_protocol {2} else {1},
-        "positions":positions, "hasMore":start > 0 || timeline.dropped_rows>0 || proc.paged_history_exists()})
+        "rows":wire,"protocolVersion":1,
+        "positions":positions, "hasMore":start > 0 || proc.paged_history_exists()})
 }
 
 fn spawn_flusher(app: AppCtx, session_id: String, proc: Arc<ChatProcess>) {
@@ -4136,8 +4056,8 @@ fn spawn_flusher(app: AppCtx, session_id: String, proc: Arc<ChatProcess>) {
                 timeline.revision += 1;
                 let flush = timeline.take_flush();
                 let rows = match &flush { TimelineFlush::Rows(rows) => rows.as_slice(), TimelineFlush::Replace(rows) => &rows[rows.len().saturating_sub(SNAPSHOT_PAGE_ROWS)..], TimelineFlush::None => &[] };
-                let mut positions: HashMap<_, _> = rows.iter().filter_map(|row| timeline.at.get(row.id()).map(|index| (row.id().to_owned(), timeline.dropped_rows + *index))).collect();
-                let wire_rows=timeline.wire_window(rows);let has_more=timeline.dropped_rows>0 || rows.len()<timeline.rows.len() || wire_rows.len()<rows.len()
+                let mut positions: HashMap<_, _> = rows.iter().filter_map(|row| timeline.at.get(row.id()).map(|index| (row.id().to_owned(), *index))).collect();
+                let wire_rows=timeline.wire_window(rows);let has_more=rows.len()<timeline.rows.len() || wire_rows.len()<rows.len()
                     || proc.paged_history_exists();
                 positions.retain(|id,_|wire_rows.iter().any(|row|row["id"].as_str()==Some(id)));
                 (flush, timeline.revision, positions,wire_rows,has_more)
@@ -4146,10 +4066,10 @@ fn spawn_flusher(app: AppCtx, session_id: String, proc: Arc<ChatProcess>) {
                 TimelineFlush::None => {}
                 TimelineFlush::Rows(rows) => {
                     let _=rows;
-                    emit(&app, &session_id, json!({"type":"rows","positions":positions,"rows":wire_rows,"protocolVersion":if proc.bounded_protocol {2} else {1},"revision":revision,"epoch":proc.started_at}));
+                    emit(&app, &session_id, json!({"type":"rows","positions":positions,"rows":wire_rows,"protocolVersion":1,"revision":revision,"epoch":proc.started_at}));
                 }
                 TimelineFlush::Replace(rows) => {
-                    emit(&app, &session_id, json!({"type":"replaceRows","userMessages":super::user_messages::outline(&rows),"positions":positions,"rows":wire_rows,"hasMore":has_more,"protocolVersion":if proc.bounded_protocol {2} else {1},"revision":revision,"epoch":proc.started_at}));
+                    emit(&app, &session_id, json!({"type":"replaceRows","userMessages":super::user_messages::outline(&rows),"positions":positions,"rows":wire_rows,"hasMore":has_more,"protocolVersion":1,"revision":revision,"epoch":proc.started_at}));
                 }
             }
             if !proc.alive.load(Ordering::Relaxed) {
@@ -4180,7 +4100,7 @@ fn handle_line(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>, line: &s
     }
     auth::claude::observe(app, session_id, proc, line);
     if let Ok(value) = serde_json::from_str::<Value>(line) {
-        claude_identity::observe(app,session_id,proc,&value);
+        claude_identity::observe(proc,&value);
         // Before the generation clock sees the frame: adopting a turn restarts that clock.
         if opens_agent_turn(&value) {
             adopt_agent_turn(app, session_id, proc);
@@ -4201,9 +4121,10 @@ fn handle_line(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>, line: &s
             if !verify_native_identity(app,session_id,proc,&agent_id) { return; }
             // Claude opens every turn with this frame. Outside a turn it is answering something of its own,
             // such as a finished background task, and the response follows once its request is served.
+            // Before a stopped turn's result, the frame still belongs to that turn.
             {
                 let mut turn = proc.turn.lock().unwrap();
-                if !turn.running {
+                if !turn.running && turn.stale_results == 0 {
                     turn.waking = Some(std::time::Instant::now());
                 }
             }
@@ -4885,10 +4806,12 @@ fn opens_agent_turn(value: &Value) -> bool {
 /// turn of its own. Nothing was dispatched, so nothing marked that turn running and the session read as
 /// waiting until it ended. Adopting the turn at its first response gives it the bookkeeping a dispatched
 /// turn has: the session reports working, and a message sent meanwhile queues behind it.
+///
+/// A turn stopped locally keeps streaming until its result arrives; those responses are not a new turn.
 fn adopt_agent_turn(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>) {
     let started_at = {
         let mut turn = proc.turn.lock().unwrap();
-        if turn.running {
+        if turn.running || turn.stale_results > 0 {
             return;
         }
         let now = now_ms();
@@ -4916,13 +4839,12 @@ fn start_waiting_message(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>
         emit_extras(app, session_id, proc);
     }
     emit_queue(app, session_id, &proc);
-    if let Err(message) = queued::dispatch(app,session_id,proc,&next) {
+    if let Err(message) = dispatch(app,session_id,proc,&next.text,&next.images,Some(&next.id)) {
         if message.written {
             emit(app, session_id, json!({"type":"error","message":message.message}));
             return;
         }
         let mut turn = proc.turn.lock().unwrap();
-        if next.original.is_some() {turn.waiting.insert(0,next);}
         turn.running = false;
         turn.started_at = None;
         drop(turn);
@@ -4950,7 +4872,6 @@ fn buffer_codex_child_notification(
     params: Value,
 ) {
     let mut pending = proc.codex_pending_child_events.lock().unwrap();
-    if proc.bounded_protocol {runtime::pending_child(&mut pending,thread_id,method,params);return;}
     if !pending.contains_key(thread_id) && pending.len() >= MAX_PENDING_CODEX_CHILD_THREADS {
         return;
     }
@@ -5779,25 +5700,55 @@ fn handle_turn_end(
     subtype: &str,
     reported_duration_ms: Option<u64>,
 ) {
-    let completed_at = now_ms();
-    let (next, interrupted, started_at, background) = {
+    let end = {
         let mut turn = proc.turn.lock().unwrap();
-        let interrupted = std::mem::take(&mut turn.interrupted);
-        let started_at = turn.started_at.take();
-        turn.waking = None;
-        let TurnQueue { active_tasks, foreground_tasks, .. } = &mut *turn;
-        for id in foreground_tasks.drain() {
-            active_tasks.remove(&id);
+        // The result of a turn already stopped here. That turn was concluded when it was stopped, and
+        // ending again now would end whatever was sent since.
+        if turn.stale_results > 0 {
+            turn.stale_results -= 1;
+            return;
         }
-        let next = if app.chat().closing.load(Ordering::Relaxed) || turn.steering || turn.waiting.is_empty() || auth::blocks_queue(proc) {
-            turn.running = false;
-            None
-        } else {
-            // Stays running: the message about to go out is the next turn, without an idle gap between.
-            Some(turn.waiting.remove(0))
-        };
-        (next, interrupted, started_at, background_pending(&turn))
+        take_turn_end(app, proc, &mut turn)
     };
+    finish_turn_end(app, session_id, proc, subtype, reported_duration_ms, end);
+}
+
+/// What ending a turn decided under the turn lock, carried out by `finish_turn_end` once it is released.
+struct TurnEnd {
+    next: Option<QueuedMessage>,
+    interrupted: bool,
+    started_at: Option<u64>,
+    background: bool,
+}
+
+fn take_turn_end(app: &AppCtx, proc: &Arc<ChatProcess>, turn: &mut TurnQueue) -> TurnEnd {
+    let interrupted = std::mem::take(&mut turn.interrupted);
+    let started_at = turn.started_at.take();
+    turn.waking = None;
+    let TurnQueue { active_tasks, foreground_tasks, .. } = &mut *turn;
+    for id in foreground_tasks.drain() {
+        active_tasks.remove(&id);
+    }
+    let next = if app.chat().closing.load(Ordering::Relaxed) || turn.steering || turn.waiting.is_empty() || auth::blocks_queue(proc) {
+        turn.running = false;
+        None
+    } else {
+        // Stays running: the message about to go out is the next turn, without an idle gap between.
+        Some(turn.waiting.remove(0))
+    };
+    TurnEnd { next, interrupted, started_at, background: background_pending(turn) }
+}
+
+fn finish_turn_end(
+    app: &AppCtx,
+    session_id: &str,
+    proc: &Arc<ChatProcess>,
+    subtype: &str,
+    reported_duration_ms: Option<u64>,
+    end: TurnEnd,
+) {
+    let completed_at = now_ms();
+    let TurnEnd { next, interrupted, started_at, background } = end;
     if let Some(duration_ms) = reported_duration_ms.or_else(|| {
         started_at.map(|started| completed_at.saturating_sub(started))
     }) {
@@ -5831,13 +5782,12 @@ fn handle_turn_end(
         return;
     };
     emit_queue(app, session_id, &proc);
-    if let Err(e) = queued::dispatch(app,session_id,proc,&item) {
+    if let Err(e) = dispatch(app,session_id,proc,&item.text,&item.images,Some(&item.id)) {
         if e.written {
             emit(app, session_id, json!({"type":"error","message":e.message}));
             return;
         }
         let mut turn = proc.turn.lock().unwrap();
-        if item.original.is_some() {turn.waiting.insert(0,item);}
         turn.running = false;
         turn.started_at = None;
         drop(turn);
@@ -5900,11 +5850,22 @@ fn report_auto_continue(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>,
 /// The agent ends an interrupted turn by reporting a failure. That failure is the interrupt working, so
 /// the turn is marked as asked-for and the timeline grows no error row for it — but only when a turn was
 /// actually running, or the mark would sit there and swallow the next real failure.
-fn interrupt_locked(proc: &Arc<ChatProcess>, turn: &mut TurnQueue) -> Result<(), String> {
+///
+/// A running Claude turn ends here, without waiting for its result: under load the reader can trail the
+/// agent by minutes, and the session would keep showing working long after the agent stopped. The caller
+/// carries out the returned end with `finish_turn_end` once the lock is released; its result, whenever it
+/// arrives, is then passed over (see `stale_results`).
+fn interrupt_locked(app: &AppCtx, proc: &Arc<ChatProcess>, turn: &mut TurnQueue) -> Result<Option<TurnEnd>, String> {
     let previous = turn.interrupted;
-    let result = send_interrupt_locked(proc, turn);
-    if result.is_err() { turn.interrupted = previous; }
-    result
+    if let Err(error) = send_interrupt_locked(proc, turn) {
+        turn.interrupted = previous;
+        return Err(error);
+    }
+    if proc.kind != SessionKind::Claude || !turn.running {
+        return Ok(None);
+    }
+    turn.stale_results += 1;
+    Ok(Some(take_turn_end(app, proc, turn)))
 }
 
 fn send_interrupt_locked(proc: &Arc<ChatProcess>, turn: &mut TurnQueue) -> Result<(), String> {
@@ -6030,10 +5991,7 @@ fn dispatch_steer(
         if proc.current_turn.lock().unwrap().is_none() { return Err("Codex is still starting its turn. Retry steering once the turn has started.".into()); }
     }
     claim_native_writer(app,proc)?;
-    if message_id.is_none() {bounded::proposal(app,session_id,proc,&row_id,text,images,false)?;}
-    let original_frame=bounded::proposal(app,session_id,proc,&row_id,text,images,true)?;
     if let Some(id) = message_id { super::submissions::begin_dispatch(&app.db().conn.lock().unwrap(), session_id, id)?; }
-    bounded::marker(app,session_id,proc,&row_id,"dispatching");
     match proc.kind {
         SessionKind::Codex => {
             let thread_id = proc.agent_session_id.lock().unwrap().clone()
@@ -6047,7 +6005,7 @@ fn dispatch_steer(
                 proc.write_codex_input(&envelope,text,images,None)
             })?;
             proc.user_targets.lock().unwrap().entry(row_id.clone()).or_insert(super::history::RewindTarget {
-                message_id: turn_id.clone(), last_message_id: None, turn_id: Some(turn_id), text: if proc.bounded_protocol {String::new()} else {text.to_string()},
+                message_id: turn_id.clone(), last_message_id: None, turn_id: Some(turn_id), text: text.to_string(),
             });
         }
         SessionKind::Opencode => opencode::steer(proc, &row_id, text, images)?,
@@ -6058,9 +6016,8 @@ fn dispatch_steer(
     if proc.kind != SessionKind::Opencode && !super::shell::is_tagged(text) {
         crate::agent::server::try_auto_rename(app, session_id, text);
     }
-    bounded::marker(app,session_id,proc,&row_id,"pipe_written");
-    let row=runtime::user_row(proc,row_id,text,images,sent_at as i64,original_frame);
-    proc.timeline.lock().unwrap().upsert(row);runtime::bound(proc,false);
+    let row=user_row(row_id,text,images.to_vec(),Some(sent_at as i64));
+    proc.timeline.lock().unwrap().upsert(row);
     if let Some(id) = message_id {
         let receipt = if proc.permissions.lock().unwrap().is_empty() { "steered" } else { "blocked" };
         super::submissions::finish_dispatch(&app.db().conn.lock().unwrap(), session_id, id, receipt)?;
@@ -6112,18 +6069,14 @@ fn dispatch(
     };
     if newly_started { proc.extras.lock().unwrap().generation = generation::GenerationTiming::default(); }
     let row_id = message_id.map(str::to_owned).unwrap_or_else(|| format!("u-{}", proc.next_request.fetch_add(1, Ordering::Relaxed)));
-    if message_id.is_none() {bounded::proposal(app,session_id,proc,&row_id,text,images,false)?;}
-    let original_frame=bounded::proposal(app,session_id,proc,&row_id,text,images,true)?;
     if let Some(id) = message_id { super::submissions::begin_dispatch(&app.db().conn.lock().unwrap(), session_id, id)?; }
-    bounded::marker(app,session_id,proc,&row_id,"dispatching");
-    let row=runtime::user_row(proc,row_id.clone(),text,images,sent_at as i64,original_frame);
-    proc.timeline.lock().unwrap().upsert(row);runtime::bound(proc,false);
+    let row=user_row(row_id.clone(),text,images.to_vec(),Some(sent_at as i64));
+    proc.timeline.lock().unwrap().upsert(row);
     // Publish the clock before a fast provider can complete the turn on its reader thread.
     if newly_started {
         emit(app, session_id, json!({"type":"turnStarted","startedAt":turn_started_at}));
     }
     emit_state(app, session_id, AgentState::Working);
-    let original_row_id=row_id.clone();
     if proc.kind == SessionKind::Antigravity {
         super::antigravity_protocol::validate(text, images.len(), "queue")?;
         proc.antigravity.lock().unwrap().begin_turn();
@@ -6147,7 +6100,7 @@ fn dispatch(
                 super::history::RewindTarget {
                     message_id: turn_id.clone(),
                     last_message_id: None, turn_id: Some(turn_id.clone()),
-                    text: if proc.bounded_protocol {String::new()} else {text.to_string()},
+                    text: text.to_string(),
                 },
             );
             let envelope=codex_identity::request(skills::with_inputs(codex_protocol::turn_steer(&id, &thread_id, &turn_id, "", &[]), text, &commands),client.as_deref());
@@ -6188,7 +6141,6 @@ fn dispatch(
     } else {
         write_claude_user_message(app,session_id,proc,&row_id,text,images)?;
     }
-    bounded::marker(app,session_id,proc,&original_row_id,"pipe_written");
     let receipt = message_id.map(|id|super::submissions::finish_dispatch(&app.db().conn.lock().unwrap(), session_id, id, "sent"))
         .transpose().map_err(|message|DispatchFailure { message, written:true });
     // Direct sends and dequeued messages share this path. Rename only after a successful write;
@@ -6291,7 +6243,7 @@ fn handle_delta(proc: &Arc<ChatProcess>, delta: Delta) {
 
 fn append(proc: &Arc<ChatProcess>, id: &str, text: &str) -> String {
     let mut buffers = proc.buffers.lock().unwrap();
-    runtime::append(proc,&mut buffers,id,text)
+    let buffer=buffers.entry(id.into()).or_default();buffer.push_str(text);buffer.clone()
 }
 
 /// Apply a complete assistant message, replacing whatever its fragments built.
@@ -6844,14 +6796,10 @@ mod tests {
             child: Mutex::new(Command::new("true").spawn().unwrap()),
             timeline: Mutex::new(Timeline::default()),
             permissions: Mutex::new(HashMap::new()),
-            permission_originals: Mutex::new(HashMap::new()),
-            outgoing:Mutex::new(None),
-            bounded_protocol:false,
             history_cut:None,
             history_paged:AtomicBool::new(false),
             codex_client_ids:false,
             codex_pending_user_ids:Mutex::new(HashMap::new()),
-            runtime_originals:Mutex::new(HashMap::new()),
             commands: Mutex::new(Vec::new()),
             config_keys: Mutex::new(Vec::new()),
             subagent_ids: Mutex::new(HashMap::new()),
@@ -7730,7 +7678,6 @@ mod tests {
             id: "queued-image".to_string(),
             text: "next".to_string(),
             images: vec![image.clone()],
-            original:None,
         });
         let manager = ChatManager::new();
         manager.sessions.lock().unwrap().insert(session_id.to_string(), proc);
@@ -8140,14 +8087,10 @@ mod tests {
             child: Mutex::new(child),
             timeline: Mutex::new(Timeline::default()),
             permissions: Mutex::new(HashMap::new()),
-            permission_originals: Mutex::new(HashMap::new()),
-            outgoing:Mutex::new(None),
-            bounded_protocol:false,
             history_cut:None,
             history_paged:AtomicBool::new(false),
             codex_client_ids:false,
             codex_pending_user_ids:Mutex::new(HashMap::new()),
-            runtime_originals:Mutex::new(HashMap::new()),
             commands: Mutex::new(Vec::new()),
             config_keys: Mutex::new(Vec::new()),
             subagent_ids: Mutex::new(HashMap::new()),
@@ -8387,7 +8330,7 @@ mod tests {
         let text = super::super::shell::build_context(&super::super::shell::ShellContext {
             command: command.into(), stderr: "Exit code 7".into(), exit_code: Some(0), ..Default::default()
         });
-        let mut item = QueuedMessage { id: "queued-shell".into(), text: text.clone(), images: vec![],original:None };
+        let mut item = QueuedMessage { id: "queued-shell".into(), text: text.clone(), images: vec![] };
         let event = serde_json::to_value(&item).unwrap();
         let snapshot = snapshot_queue_item(&item);
         assert_eq!(event, snapshot);
@@ -8592,7 +8535,10 @@ mod tests {
         assert_eq!(stopped["run"]["state"],"stopped");
         assert!(stopped["interruptErrors"].as_array().unwrap().is_empty());
         assert!(app.chat().snapshot("planner").queue.is_empty());
-        assert_eq!(app.chat().snapshot("executor").queue.len(),2);
+        // The stop keeps the user's own messages. The stopped turn ends at once, so the first goes out.
+        let executor=app.chat().snapshot("executor");
+        assert_eq!(executor.queue.len(),1);
+        assert!(executor.rows.iter().any(|row|matches!(row,ChatRow::User{text,..} if text=="Unrelated user message")));
         assert!(flow::action(&app,&flow_request("planner","dispatch",3,"Too late")).is_err());
         for id in ["planner","executor"] {app.chat().stop(&app,id).unwrap();}
         let dir=app.data_dir().unwrap();drop(app);std::fs::remove_dir_all(dir).unwrap();
@@ -8731,7 +8677,10 @@ mod tests {
         assert_eq!(tell::send(&app,&normal).unwrap()["delivery"],"queued");
         tell::send(&app,&normal).unwrap(); assert_eq!(app.chat().snapshot("planner").queue.len(),1);
         flow::action(&app,&flow_request("owner","stop",0,"")).unwrap();
-        assert_eq!(app.chat().snapshot("planner").queue.len(),1); // A workflow stop preserves ordinary tells.
+        // A workflow stop preserves ordinary tells; the stopped turn ends at once, so the tell goes out.
+        let planner=app.chat().snapshot("planner");
+        assert!(planner.queue.is_empty());
+        assert!(planner.rows.iter().any(|row|matches!(row,ChatRow::User{text,..} if text.contains("Still working"))));
         req.round=Some(2); req.message_id=format!("msg-{}",uuid::Uuid::new_v4());
         assert!(tell::send(&app,&req).is_err()); // Blocking permits reports; explicitly stopping does not.
         for id in ["planner","executor"] {app.chat().stop(&app,id).unwrap();}
@@ -9212,10 +9161,15 @@ mod tests {
         m.send(&app, "s", "first", Vec::new(), "queue").unwrap();
         m.send(&app, "s", "waiting", Vec::new(), "queue").unwrap();
         assert_eq!(m.send(&app, "s", "urgent", Vec::new(), "interrupt").unwrap(), "queued");
-        assert_eq!(queued(&m, "s"), vec!["urgent", "waiting"]);
-        // The agent ends an interrupted turn by reporting a failure; the interrupting message follows it.
+        // The stopped Claude turn ends at once, so the interrupting message goes out without waiting.
+        assert_eq!(said(&m, "s"), vec!["first", "urgent"]);
+        assert_eq!(queued(&m, "s"), vec!["waiting"]);
+        // The agent ends an interrupted turn by reporting a failure. That result is the stopped turn's,
+        // so it does not end the turn the interrupting message started.
         finish_turn(&m, &app, "s", "error_during_execution");
         assert_eq!(said(&m, "s"), vec!["first", "urgent"]);
+        finish_turn(&m, &app, "s", "success");
+        assert_eq!(said(&m, "s"), vec!["first", "urgent", "waiting"]);
     }
 
     /// A turn stopped on purpose is not a fault, and must not leave an error row behind.
@@ -9239,6 +9193,55 @@ mod tests {
             .rows
             .iter()
             .any(|r| matches!(r, ChatRow::Error { .. })));
+    }
+
+    const MAIN_RESPONSE: &str = r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"m"}},"parent_tool_use_id":null}"#;
+
+    /// Stopping a Claude turn ends it at once. When the reader falls behind, the agent's result for that
+    /// turn can trail by minutes; the late line must neither hold the session nor end the turn after it.
+    #[test]
+    fn a_stopped_turn_ends_without_waiting_for_its_result() {
+        let _state_guard = crate::session_state::test_lock();
+        let app = ctx("stop-local");
+        let m = manager_with_session("s");
+        let proc = m.get("s").unwrap();
+        m.send(&app, "s", "first", Vec::new(), "queue").unwrap();
+        m.interrupt(&app, "s").unwrap();
+        assert!(!proc.turn.lock().unwrap().running, "stopped here, not when the result comes");
+        assert_eq!(m.send(&app, "s", "next", Vec::new(), "queue").unwrap(), "sent");
+
+        // The stopped turn's remaining output and result arrive after the new message went out.
+        handle_line(&app, "s", &proc, MAIN_RESPONSE);
+        handle_line(&app, "s", &proc, r#"{"type":"result","subtype":"error_during_execution","duration_ms":5}"#);
+        assert!(proc.turn.lock().unwrap().running, "that result belongs to the stopped turn");
+        assert!(!m.snapshot("s").rows.iter().any(|r| matches!(r, ChatRow::Error { .. })));
+
+        handle_line(&app, "s", &proc, TURN_DONE);
+        assert!(!proc.turn.lock().unwrap().running);
+        assert_eq!(said(&m, "s"), vec!["first", "next"]);
+    }
+
+    /// With nothing sent after the stop, the stopped turn's remaining output does not reopen it, and a
+    /// second stop has no second result to wait for.
+    #[test]
+    fn a_stopped_turns_late_output_does_not_open_a_turn() {
+        let _state_guard = crate::session_state::test_lock();
+        let app = ctx("stop-late-output");
+        let m = manager_with_session("s");
+        let proc = m.get("s").unwrap();
+        m.send(&app, "s", "first", Vec::new(), "queue").unwrap();
+        m.interrupt(&app, "s").unwrap();
+        m.interrupt(&app, "s").unwrap();
+        assert_eq!(proc.turn.lock().unwrap().stale_results, 1);
+
+        handle_line(&app, "s", &proc, MAIN_RESPONSE);
+        assert!(!proc.turn.lock().unwrap().running);
+        handle_line(&app, "s", &proc, TURN_DONE);
+        assert_eq!(proc.turn.lock().unwrap().stale_results, 0);
+
+        // A turn Claude opens afterwards, such as an answer to finished background work, is adopted.
+        handle_line(&app, "s", &proc, MAIN_RESPONSE);
+        assert!(proc.turn.lock().unwrap().running);
     }
 
     /// Steering is the deliberate exception: the message is written into the turn already running.
@@ -9447,8 +9450,8 @@ mod tests {
         {
             let mut turn = proc.turn.lock().unwrap();
             turn.running = true;
-            turn.waiting.push(QueuedMessage { id: "q-correction".into(), text: "correction".into(), images: Vec::new(),original:None });
-            turn.waiting.push(QueuedMessage { id: "q-later".into(), text: "later".into(), images: Vec::new(),original:None });
+            turn.waiting.push(QueuedMessage { id: "q-correction".into(), text: "correction".into(), images: Vec::new() });
+            turn.waiting.push(QueuedMessage { id: "q-later".into(), text: "later".into(), images: Vec::new() });
         }
         let manager = ChatManager::new();
         manager.sessions.lock().unwrap().insert("s".into(), proc.clone());
@@ -10087,7 +10090,7 @@ mod tests {
     #[test]
     fn claude_auth_logout_releases_cached_credentials_and_restores_queued_messages() {
         let (app, proc, _reader) = claude_auth_fixture("claude-auth-logout");
-        proc.turn.lock().unwrap().waiting.push(QueuedMessage { id:"queued".into(), text:"Later".into(), images:vec![],original:None });
+        proc.turn.lock().unwrap().waiting.push(QueuedMessage { id:"queued".into(), text:"Later".into(), images:vec![] });
         // The fixture executable is `true`; this never touches the user's Claude credentials.
         app.chat().auth_logout(&app, "s").unwrap();
         assert_eq!(app.chat().snapshot("s").extras.auth.unwrap().status, "signedOut");
@@ -10203,7 +10206,7 @@ mod tests {
         {
             let mut turn = proc.turn.lock().unwrap();
             turn.running = true;
-            turn.waiting.push(QueuedMessage { id: "queued".into(), text: "keep queued".into(), images: vec![],original:None });
+            turn.waiting.push(QueuedMessage { id: "queued".into(), text: "keep queued".into(), images: vec![] });
         }
         handle_codex_notification(&app, "s", &proc, "turn/completed", json!({"turn":{"status":"failed","error":{"codexErrorInfo":"unauthorized","message":"refresh token revoked"}}}));
         assert!(!proc.turn.lock().unwrap().running);
@@ -10244,7 +10247,7 @@ mod tests {
     fn codex_auth_logout_uses_native_account_api_and_retains_history() {
         let (app, proc, mut reader) = codex_permission_fixture("codex-auth-logout");
         proc.timeline.lock().unwrap().upsert(ChatRow::User { id:"original".into(), text:"keep history".into(), images:vec![], at:None });
-        proc.turn.lock().unwrap().waiting.push(QueuedMessage { id:"waiting".into(), text:"keep queued".into(), images:vec![],original:None });
+        proc.turn.lock().unwrap().waiting.push(QueuedMessage { id:"waiting".into(), text:"keep queued".into(), images:vec![] });
         let original_thread = app.chat().snapshot("s").agent_session_id;
         let caller = app.clone();
         let worker = std::thread::spawn(move || caller.chat().auth_logout(&caller, "s"));

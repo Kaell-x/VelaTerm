@@ -5,7 +5,8 @@
 //! starts the other. The conversation survives — both engines write the same record and pick it back up —
 //! but a turn in flight does not, and neither does the agent's watch over the background tasks it started:
 //! they belong to the process being stopped. So a working agent, or one still waiting on its background
-//! tasks, is asked about first, and an idle one is simply moved.
+//! tasks, is asked about first, and an idle one is simply moved. A switch started on a phone always asks:
+//! it also changes the view on the desktop, which the person holding the phone cannot see.
 
 import { useRef, useState } from "react";
 
@@ -14,7 +15,7 @@ import { useT } from "../../../i18n";
 import { useTermStore } from "../../../store/termStore";
 import { effectiveStatus, type Session, type SessionEngine } from "../../../types";
 
-export function useEngineSwitch(session: Session) {
+export function useEngineSwitch(session: Session, { fromPhone = false }: { fromPhone?: boolean } = {}) {
   const t = useT();
   const status = useTermStore((s) => effectiveStatus(s.runtimes[session.id]));
   // The engine waiting on an answer, or null when nothing is being asked.
@@ -35,7 +36,7 @@ export function useEngineSwitch(session: Session) {
   };
 
   const switchTo = (engine: SessionEngine) => {
-    if (status === "working" || status === "background") setAsking(engine);
+    if (fromPhone || status === "working" || status === "background") setAsking(engine);
     else apply(engine);
   };
 
@@ -64,8 +65,10 @@ export function useEngineSwitch(session: Session) {
           <div className="quit-head">
             <div className="quit-title">{t("session.switchTitle")}</div>
             <div className="quit-body">
-              {t(status === "background" ? "session.switchBodyBackground" : "session.switchBody")}
+              {t(status === "background" ? "session.switchBodyBackground"
+                : status === "working" ? "session.switchBody" : fromPhone ? "session.switchBodyIdle" : "session.switchBody")}
             </div>
+            {fromPhone && <div className="quit-body">{t("session.switchDesktopNote")}</div>}
           </div>
           <div className="quit-foot">
             <button className="quit-btn ghost" onClick={() => setAsking(null)}>

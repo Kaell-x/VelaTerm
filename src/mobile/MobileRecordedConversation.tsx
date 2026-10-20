@@ -4,15 +4,34 @@ import { useT } from "../i18n";
 import { ptyWrite, readAgentChat, type ChatEvent } from "../ipc/commands";
 import { MessageBubble, ReasoningRow, ShellRow, ToolCard, WakeRow } from "../layout/CenterPane/session/rows";
 import { assistantLabel } from "../layout/sessionViewers/TranscriptViewer";
-import type { Session } from "../types";
+import { supportsChatEngine, type Session } from "../types";
 import { hasPagedHistory } from "../layout/sessionViewers/pagedHistory";
 import { PagedConversation } from "../layout/sessionViewers/PagedConversation";
 import "../layout/CenterPane/session/session-view.css";
+import { useEngineSwitch } from "../layout/CenterPane/session/engineSwitch";
+import { shareAccess } from "../ipc/chat";
+import { isShareSurface } from "../ipc/shareBase";
+
+/** Whether this client may move a terminal-view agent to the conversation view: always on a direct
+ * connection, only for the host's own account through a share. Null while a share connection is asking. */
+function useCanSwitch(): boolean | null {
+  const [shared, setShared] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!isShareSurface) return;
+    let disposed = false;
+    shareAccess().then(a => { if (!disposed) setShared(a.canSwitchEngine); }, () => { if (!disposed) setShared(false); });
+    return () => { disposed = true; };
+  }, []);
+  return isShareSurface ? shared : true;
+}
 
 /** Reads the running terminal's recording without acquiring its PTY or starting a chat engine. */
 export function MobileRecordedConversation({ session, cwd }: { session: Session; cwd?: string }) {
   const t = useT();
-  const readOnly = session.kind === "kiro";
+  // A share connection cannot write to the host terminal, so it reads the record until the view is switched.
+  const readOnly = session.kind === "kiro" || isShareSurface;
+  const canSwitch = useCanSwitch();
+  const { switchTo, confirm } = useEngineSwitch(session, { fromPhone: true });
   const paged=hasPagedHistory(session);
   const [rows, setRows] = useState<ChatEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,6 +88,13 @@ export function MobileRecordedConversation({ session, cwd }: { session: Session;
         : row.kind === "wake" ? <WakeRow key={row.index} summary={row.text ?? ""} at={row.timestamp ?? undefined} />
         : <MessageBubble key={row.index} who={row.kind === "user" ? t("archive.you") : assistantLabel(session.kind)} isUser={row.kind === "user"} text={row.text ?? ""} at={row.timestamp ?? undefined} />)}
     </div>}
+    {supportsChatEngine(session.kind) && canSwitch !== null && <div className="m-recorded-switch" role="note">
+      <p>{t(!isShareSurface ? "mobile.tuiSuggest" : canSwitch ? "mobile.tuiShareReadOnly" : "mobile.tuiShareHost")}</p>
+      {canSwitch && <button type="button" className="vlx-btn vlx-btn-primary" onClick={() => switchTo("chat")}>
+        {t("mobile.switchToConversation")}
+      </button>}
+    </div>}
+    {confirm}
     {!readOnly && <form className="m-recorded-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
       {sendError && <p role="alert">{t("chat.submission.failed")}: {sendError}</p>}
       <div className="m-recorded-input">

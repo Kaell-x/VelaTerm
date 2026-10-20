@@ -22,6 +22,8 @@ const vi: typeof en = {
   "translation.title": "Dịch",
   "translation.enable": "Bật tính năng dịch",
   "translation.visibility": "Các điều khiển dịch chỉ xuất hiện trong cuộc hội thoại khi tính năng này được bật.",
+  "translation.defaultEnabled": "Bật dịch theo mặc định",
+  "translation.defaultEnabledHint": "Áp dụng cho các cuộc hội thoại chưa lưu tùy chọn dịch riêng. Các thay đổi được lưu tự động.",
   "translation.conversationKinds": "Loại tác nhân trong cuộc hội thoại",
   "translation.conversationKindsHint": "Các điều khiển dịch và tính năng dịch tự động chỉ áp dụng cho cuộc hội thoại với những loại tác nhân đã chọn. Các thay đổi được lưu tự động.",
   "translation.chooseConversationKinds": "Chọn loại tác nhân",
@@ -1233,8 +1235,6 @@ const vi: typeof en = {
     `Xóa nhóm “${name}”? Mọi nhóm con và phiên cũng sẽ bị xóa. Không thể hoàn tác.`,
   "tree.deleteSessionBody": (name: string) =>
     `Xóa phiên “${name}” (và mọi phiên con)? Không thể hoàn tác.`,
-  "tree.deleteWorktrees": (n: number) =>
-    `Đồng thời xóa các Git worktree liên kết (tổng cộng ${n}; có thể thất bại nếu cây làm việc có thay đổi)`,
   "info.name": "Tên",
   "info.type": "Loại",
   "info.project": "Dự án",
@@ -1276,9 +1276,9 @@ const vi: typeof en = {
   "worktree.createFailed": "Không thể tạo worktree",
   "worktree.noRepoRoot": "Dự án này không có đường dẫn kho Git dùng được.",
   "worktreeSel.label": "Worktree",
-  "worktreeSel.modeNone": "Không",
-  "worktreeSel.modeNew": "Mới",
-  "worktreeSel.modeExisting": "Có sẵn",
+  "worktreeSel.modeNone": "Không dùng",
+  "worktreeSel.modeNew": "Tạo mới",
+  "worktreeSel.modeExisting": "Dùng có sẵn",
   "worktreeSel.loading": "Đang tải worktree…",
   "worktreeSel.empty": "Không có worktree sẵn có trong kho này.",
   "worktreeSel.loadFailed": "Không thể liệt kê worktree (không phải kho Git?).",
@@ -1328,6 +1328,7 @@ const vi: typeof en = {
   "search.archivedBadge": "Đã lưu trữ",
   "search.summary": (matches: number, sessions: number) =>
     `${matches} kết quả · ${sessions} phiên`,
+  "search.pending": (n: number) => `Còn ${n} phiên đang được lập chỉ mục nên kết quả có thể chưa đầy đủ.`,
   "search.matchPosition": (n: number, total: number) => `${n} / ${total}`,
   "search.roleTerminal": "Terminal",
   "search.collapseGroup": "Thu gọn",
@@ -1737,6 +1738,10 @@ const vi: typeof en = {
   "mobile.empty2":
     "Tạo một phiên trong ứng dụng máy tính hoặc trình duyệt máy tính và phiên sẽ tự động xuất hiện tại đây.",
   "mobile.back": "‹ Quay lại",
+  "mobile.tuiSuggest": "Phiên này đang chạy ở chế độ terminal. Trên điện thoại, chế độ hội thoại dễ dùng hơn.",
+  "mobile.tuiShareReadOnly": "Phiên này đang chạy ở chế độ terminal nên tại đây bạn chỉ có thể đọc, không thể trả lời. Hãy chuyển sang chế độ hội thoại để tiếp tục.",
+  "mobile.tuiShareHost": "Phiên này đang chạy ở chế độ terminal nên tại đây bạn chỉ có thể đọc, không thể trả lời. Chủ sở hữu máy chủ có thể chuyển phiên sang chế độ hội thoại.",
+  "mobile.switchToConversation": "Chuyển sang chế độ hội thoại",
   "mobile.selCopy": "Sao chép",
   "mobile.selCancel": "Hủy",
 
@@ -1938,6 +1943,8 @@ const vi: typeof en = {
   "session.switchBody": "Lượt đang thực hiện sẽ bị dừng. Nội dung hội thoại được giữ nguyên.",
   "session.switchBodyBackground": "Các tác vụ nền do tác nhân khởi chạy có thể bị dừng và tác nhân sẽ không được thông báo khi chúng kết thúc. Nội dung hội thoại được giữ nguyên.",
   "session.switchConfirm": "Chuyển",
+  "session.switchBodyIdle": "Tác nhân trong terminal sẽ dừng và tiếp tục ở chế độ hội thoại. Nội dung hội thoại được giữ nguyên.",
+  "session.switchDesktopNote": "Ứng dụng máy tính cũng sẽ hiển thị phiên này ở chế độ hội thoại.",
   "session.terminalViewHint": "Nhấn vào đây để quay lại chế độ terminal.",
   "session.loading": "Đang đọc hội thoại…",
   "session.unavailable": "Chưa thể đọc hội thoại này",

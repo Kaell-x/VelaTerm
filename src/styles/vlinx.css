@@ -253,6 +253,8 @@ svg { display: block; }
 .sidebar-tree-body { position: relative; flex: 1; min-height: 0; }
 .sidebar-tree-footer { height: 30px; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 3px 6px; border-top: 1px solid var(--border); background: var(--bg-1); }
 .sidebar-tree-footer .icon-btn { flex: none; }
+/* Keep the global clear-notifications action on the left; pane actions stay on the right. */
+.sidebar-tree-footer .sidebar-tree-clear-badges { margin-right: auto; }
 .sidebar-tree-divider { z-index: 6; }
 .sidebar-tree-divider.horizontal { width: 1px; cursor: col-resize; }
 .sidebar-tree-divider.vertical { height: 1px; cursor: row-resize; }
@@ -311,6 +313,8 @@ svg { display: block; }
 .row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .row.project .nm { font-weight: 700; color: var(--text); letter-spacing: 0.2px; }
 .row.group .nm { color: var(--text-mid); }
+/* Display-only worktree level gathering sibling sessions that share a worktree. */
+.row.worktree .nm { color: var(--text-mid); }
 .row.collection .nm { font-weight: 700; color: var(--text-mid); letter-spacing: 0.2px; }
 .row.session .nm { font-weight: 400; }
 .row .meta { flex: none; min-width: 18px; justify-content: flex-end; color: var(--text-faint); font-size: 10px; opacity: 0; transition: opacity .1s; display: flex; gap: 2px; }

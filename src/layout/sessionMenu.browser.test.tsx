@@ -64,7 +64,6 @@ vi.mock("../ipc/commands", () => ({
   listShells: vi.fn(() => Promise.resolve([])),
   ptyKill: vi.fn(() => Promise.resolve()),
   removeWorktree: vi.fn(),
-  worktreesInSubtree: vi.fn(() => Promise.resolve([])),
 }));
 vi.mock("../ipc/info", () => ({ copyText: vi.fn(), openDir: vi.fn() }));
 vi.mock("../ipc/chat", () => ({ chatStop: vi.fn(() => Promise.resolve()) }));

@@ -32,20 +32,6 @@ impl TempDir {
         } else {None};
         Ok(Self(path,lease))
     }
-    pub(crate) fn reserve(&self,bytes:u64) -> Result<(),String> {
-        self.1.as_ref().ok_or("storage_pressure: managed snapshot ownership is unavailable")?;
-        // Windows byte-range locks also block reads through another handle. Keep readable metadata
-        // separate from the lifetime lease and publish only a complete reservation.
-        let pending=self.0.join(format!("reservation-{}.tmp",uuid::Uuid::new_v4()));
-        let mut options=fs::OpenOptions::new();options.create_new(true).write(true);
-        #[cfg(unix)] {use std::os::unix::fs::OpenOptionsExt;options.mode(0o600);}
-        let result=(|| {
-            let mut file=options.open(&pending)?;file.write_all(&bytes.to_le_bytes())?;file.sync_all()?;drop(file);
-            fs::rename(&pending,self.0.join("reservation"))
-        })();
-        if result.is_err() {let _=fs::remove_file(&pending);}
-        result.map_err(|_|"storage_pressure: native snapshot reservation cannot be persisted".into())
-    }
 }
 impl Drop for TempDir {
     fn drop(&mut self) {self.1.take();let _ = fs::remove_dir_all(&self.0);}
@@ -55,10 +41,6 @@ pub(crate) struct Database {
     pub conn: Connection,
     // Fields drop in declaration order: close SQLite before removing its directory.
     _directory: std::sync::Arc<TempDir>,
-    pub copy: PathBuf,
-}
-impl Database {
-    pub(crate) fn retain(&self) -> std::sync::Arc<TempDir> {self._directory.clone()}
 }
 
 /// Missing and unreadable sources are distinct; symlinks cannot substitute another source mid-read.
@@ -156,12 +138,6 @@ fn collect(path: &Path, copy: Option<&Path>, cancel:&AtomicBool,limit:u64) -> Re
 pub(crate) fn database(path: &Path) -> Result<Database, String> {
     database_with_probe(path, |_| {})
 }
-pub(crate) fn database_with_cancel(path:&Path,cancel:&AtomicBool) -> Result<Database,String> {
-    database_with_probe_cancel(path,|_|{},cancel)
-}
-pub(crate) fn database_reserved(path:&Path,directory:std::sync::Arc<TempDir>,limit:u64,cancel:&AtomicBool) -> Result<Database,String> {
-    database_copy(path,|_|{},cancel,Some(directory),limit)
-}
 
 fn database_with_probe(path: &Path, after_copy: impl FnMut(&Path)) -> Result<Database, String> {
     database_with_probe_cancel(path,after_copy,&AtomicBool::new(false))
@@ -196,7 +172,7 @@ fn database_copy(path:&Path,mut after_copy:impl FnMut(&Path),cancel:&AtomicBool,
             if cancel.load(Ordering::Relaxed) {Err("read_canceled".into())} else {result.map_err(|_|"Kiro history database integrity check failed".into())}
         });let result=result?;
         if result != "ok" { return Err("Kiro history database integrity check failed".into()); }
-        return Ok(Database {conn,copy,_directory:directory});
+        return Ok(Database {conn,_directory:directory});
     }
     Err("Kiro history keeps changing; retry after the native writer becomes idle".into())
 }

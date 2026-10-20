@@ -191,6 +191,8 @@ function ResourcesSection({ pid }: { pid: number | undefined }) {
   useEffect(() => {
     let cancelled = false;
     const sample = () => {
+      // Nobody sees the numbers while the window is hidden; sampling resumes the moment it shows again.
+      if (document.hidden) return;
       if (pid == null) setStats(null);
       else
         processStats(pid)
@@ -205,9 +207,11 @@ function ResourcesSection({ pid }: { pid: number | undefined }) {
     sample();
     // Three seconds still appears live to users while reducing sampling cost by one-third versus 2s.
     const t = setInterval(sample, 3000);
+    document.addEventListener("visibilitychange", sample);
     return () => {
       cancelled = true;
       clearInterval(t);
+      document.removeEventListener("visibilitychange", sample);
     };
   }, [pid, showSystem]);
 

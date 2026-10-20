@@ -22,6 +22,8 @@ const ko: typeof en = {
   "translation.title": "번역",
   "translation.enable": "번역 사용",
   "translation.visibility": "이 기능을 켜면 대화에 번역 컨트롤이 표시됩니다.",
+  "translation.defaultEnabled": "기본으로 번역 켜기",
+  "translation.defaultEnabledHint": "번역 설정을 별도로 저장하지 않은 대화에 적용됩니다. 변경 사항은 자동으로 저장됩니다.",
   "translation.conversationKinds": "번역을 사용할 에이전트 유형",
   "translation.conversationKindsHint": "선택한 에이전트 유형의 대화에만 번역 컨트롤과 자동 번역이 적용됩니다. 변경 사항은 자동으로 저장됩니다.",
   "translation.chooseConversationKinds": "에이전트 유형 선택",
@@ -1242,8 +1244,6 @@ const ko: typeof en = {
     `그룹 "${name}"을(를) 삭제할까요? 하위 그룹과 세션도 모두 삭제됩니다. 되돌릴 수 없습니다.`, // Delete group "{name}"?…
   "tree.deleteSessionBody": (name) =>
     `세션 "${name}" (및 모든 하위 세션)을 삭제할까요? 되돌릴 수 없습니다.`, // Delete session "{name}"…
-  "tree.deleteWorktrees": (n) =>
-    `연결된 git worktree도 삭제 (총 ${n}개. 작업 트리에 변경이 있으면 삭제가 실패할 수 있습니다)`, // Also remove associated git worktrees…
 
   // Session information dialog
   "info.name": "이름", // Name
@@ -1292,9 +1292,9 @@ const ko: typeof en = {
     "이 프로젝트에는 사용할 수 있는 git 저장소 경로가 없습니다.", // This project has no usable git repository path.
   // ── Worktree selector for custom session creation ──
   "worktreeSel.label": "Worktree",
-  "worktreeSel.modeNone": "없음", // None
-  "worktreeSel.modeNew": "새로", // New
-  "worktreeSel.modeExisting": "기존", // Existing
+  "worktreeSel.modeNone": "사용 안 함", // None
+  "worktreeSel.modeNew": "새로 만들기", // New
+  "worktreeSel.modeExisting": "기존 선택", // Existing
   "worktreeSel.loading": "worktree 불러오는 중…", // Loading worktrees…
   "worktreeSel.empty": "이 저장소에 기존 worktree가 없습니다.", // No existing worktrees in this repository.
   "worktreeSel.loadFailed":
@@ -1343,6 +1343,7 @@ const ko: typeof en = {
   "search.backToResults": "결과로 돌아가기", // Back to results
   "search.archivedBadge": "보관됨", // Archived
   "search.summary": (m, s) => `일치 ${m}건 · 세션 ${s}개`, // X matches · N sessions
+  "search.pending": (n) => `세션 ${n}개를 아직 인덱싱하는 중이므로 결과가 완전하지 않을 수 있습니다.`, // N sessions are still being indexed, so results may be incomplete
   "search.matchPosition": (n, total) => `${n} / ${total}`, // N of M
   "search.roleTerminal": "터미널", // Terminal
   "search.collapseGroup": "접기", // Collapse
@@ -1741,6 +1742,10 @@ const ko: typeof en = {
   "mobile.empty2":
     "데스크톱 앱이나 PC 브라우저에서 만들면 여기 자동으로 나타납니다.", // Create one on the desktop app or a computer browser…
   "mobile.back": "‹ 뒤로", // ‹ Back
+  "mobile.tuiSuggest": "이 세션은 터미널 보기로 실행 중입니다. 휴대폰에서는 대화 보기가 더 편리합니다.", // This session runs in terminal view. Conversation view works better on a phone.
+  "mobile.tuiShareReadOnly": "이 세션은 터미널 보기로 실행 중이므로 여기서는 읽기만 할 수 있고 답장할 수 없습니다. 계속하려면 대화 보기로 전환하세요.", // This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.
+  "mobile.tuiShareHost": "이 세션은 터미널 보기로 실행 중이므로 여기서는 읽기만 할 수 있고 답장할 수 없습니다. 호스트 소유자가 대화 보기로 전환할 수 있습니다.", // This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.
+  "mobile.switchToConversation": "대화 보기로 전환", // Switch to conversation view
   "mobile.selCopy": "복사", // Copy
   "mobile.selCancel": "취소", // Cancel
 
@@ -1962,6 +1967,8 @@ const ko: typeof en = {
   "session.switchBody": "진행 중인 턴이 중단됩니다. 대화 내용은 그대로 유지됩니다.",
   "session.switchBodyBackground": "에이전트가 시작한 백그라운드 작업이 중단될 수 있으며, 작업이 끝나도 에이전트에게 알림이 가지 않습니다. 대화 내용은 그대로 유지됩니다.",
   "session.switchConfirm": "전환",
+  "session.switchBodyIdle": "터미널의 에이전트가 중지되고 대화 보기에서 이어서 실행됩니다. 대화 내용은 그대로 유지됩니다.", // The agent in the terminal stops and continues in conversation view. Your conversation is kept.
+  "session.switchDesktopNote": "데스크톱 앱에서도 이 세션이 대화 보기로 전환됩니다.", // The desktop app will also show this session in conversation view.
   "session.terminalViewHint": "여기를 클릭하면 터미널 보기로 돌아갈 수 있습니다.",
   "session.loading": "대화를 읽는 중…",
   "session.unavailable": "이 대화는 아직 읽을 수 없습니다",

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import {act,cleanup,renderHook} from "@testing-library/react";
+import {act,cleanup,render,renderHook} from "@testing-library/react";
 import {afterEach,beforeEach,expect,it,vi} from "vitest";
-import {useContentSearch} from "./searchKit";
+import {ContentSearchControls,useContentSearch,type ContentSearch} from "./searchKit";
 import type {ContentSearchPage} from "../../ipc/commands";
 const api=vi.hoisted(()=>({start:vi.fn(),page:vi.fn(),cancel:vi.fn()}));
 vi.mock("../../ipc/commands",()=>({startContentSearch:api.start,contentSearchPage:api.page,cancelContentSearch:api.cancel,readAgentTranscript:vi.fn()}));
@@ -53,4 +53,12 @@ it("retains a visible failure and retries through a fresh owned task",async()=>{
   const {result}=renderHook(()=>useContentSearch("live"));act(()=>result.current.setQuery("needle"));await advance(250);
   expect(result.current.error).toContain("source_changed:");expect(result.current.loading).toBe(false);
   act(()=>result.current.retry());await advance(250);expect(api.cancel).toHaveBeenCalledWith("failed");expect(result.current.error).toBeNull();expect(result.current.results[0].name).toBe("fresh");
+});
+
+it("says when sessions were still being indexed so a short result is not mistaken for the whole",()=>{
+  const search=(pendingSessions?:number):ContentSearch=>({query:"needle",setQuery:()=>{},results:[],loading:false,error:null,
+    page:{...ready("one","a"),pendingSessions},next:()=>{},previous:()=>{},retry:()=>{},cancel:()=>{}});
+  const {getByRole,rerender}=render(<ContentSearchControls search={search(3)} />);
+  expect(getByRole("status").textContent).toBe("72 matches · 12 sessions · 3 sessions are still being indexed, so results may be incomplete.");
+  rerender(<ContentSearchControls search={search(0)} />);expect(getByRole("status").textContent).toBe("72 matches · 12 sessions");
 });

@@ -32,6 +32,8 @@ const ru: typeof en = {
   "translation.title": "Перевод",
   "translation.enable": "Включить перевод",
   "translation.visibility": "Элементы управления переводом появляются в диалогах только при включении этой функции.",
+  "translation.defaultEnabled": "Включать перевод по умолчанию",
+  "translation.defaultEnabledHint": "Применяется к диалогам без сохранённых настроек перевода. Изменения сохраняются автоматически.",
   "translation.conversationKinds": "Типы агентов для диалогов",
   "translation.conversationKindsHint": "Элементы управления переводом и автоматический перевод доступны только в диалогах с агентами выбранных типов. Изменения сохраняются автоматически.",
   "translation.chooseConversationKinds": "Выберите типы агентов",
@@ -1260,8 +1262,6 @@ const ru: typeof en = {
     `Удалить группу «${name}»? Все её подгруппы и сессии тоже будут удалены. Это действие необратимо.`, // Delete group "{name}"?…
   "tree.deleteSessionBody": (name) =>
     `Удалить сессию «${name}» (и все её дочерние сессии)? Это действие необратимо.`, // Delete session "{name}"…
-  "tree.deleteWorktrees": (n) =>
-    `Также удалить связанные git worktree (всего ${n}; удаление может не сработать, если в рабочем дереве есть изменения)`, // Also remove associated git worktrees…
 
   // Session information dialog
   "info.name": "Название", // Name
@@ -1310,7 +1310,7 @@ const ru: typeof en = {
     "У этого проекта нет пригодного пути к git-репозиторию.", // This project has no usable git repository path.
   // ── Worktree selector for custom session creation ──
   "worktreeSel.label": "Worktree",
-  "worktreeSel.modeNone": "Без", // None
+  "worktreeSel.modeNone": "Нет", // None
   "worktreeSel.modeNew": "Новый", // New
   "worktreeSel.modeExisting": "Существующий", // Existing
   "worktreeSel.loading": "Загрузка worktree…", // Loading worktrees…
@@ -1356,7 +1356,7 @@ const ru: typeof en = {
   "search.includeArchivedHint":
     "Искать также в архивных сессиях (по умолчанию выкл.)", // Also search archived sessions (off by default)
   "search.searching": "Поиск…", // Searching…
-  "search.progress": (sessions, bytes) => `Поиск… Проверено сеансов: ${sessions} · Прочитано: ${bytes}`,
+  "search.progress": (sessions, bytes) => `Поиск… Проверено сессий: ${sessions} · Прочитано: ${bytes}`,
   "search.noResults": "Совпадений не найдено", // No matches found
   "search.sessionCount": (n) =>
     `${n} ${plural(n, "сессия", "сессии", "сессий")}`, // n sessions
@@ -1368,6 +1368,8 @@ const ru: typeof en = {
   "search.archivedBadge": "В архиве", // Archived
   "search.summary": (m, s) =>
     `${m} ${plural(m, "совпадение", "совпадения", "совпадений")} · ${s} ${plural(s, "сессия", "сессии", "сессий")}`, // X matches · N sessions
+  "search.pending": (n) =>
+    `Индексация ещё не завершена для ${n} ${plural(n, "сессии", "сессий", "сессий")}, поэтому результаты могут быть неполными.`, // N sessions are still being indexed, so results may be incomplete
   "search.matchPosition": (n, total) => `${n} из ${total}`, // N of M
   "search.roleTerminal": "Терминал", // Terminal
   "search.collapseGroup": "Свернуть", // Collapse
@@ -1773,6 +1775,10 @@ const ru: typeof en = {
   "mobile.empty2":
     "Создайте сеанс в настольном приложении или в браузере на компьютере. Он появится здесь автоматически.", // Create one on the desktop app or a computer browser…
   "mobile.back": "‹ Назад", // ‹ Back
+  "mobile.tuiSuggest": "Этот сеанс работает в виде терминала. На телефоне удобнее вид беседы.", // This session runs in terminal view. Conversation view works better on a phone.
+  "mobile.tuiShareReadOnly": "Этот сеанс работает в виде терминала, поэтому здесь его можно читать, но нельзя отвечать. Чтобы продолжить, переключитесь на вид беседы.", // This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.
+  "mobile.tuiShareHost": "Этот сеанс работает в виде терминала, поэтому здесь его можно читать, но нельзя отвечать. Владелец хоста может переключить его на вид беседы.", // This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.
+  "mobile.switchToConversation": "Переключить на вид беседы", // Switch to conversation view
   "mobile.selCopy": "Копировать", // Copy
   "mobile.selCancel": "Отмена", // Cancel
 
@@ -1994,6 +2000,8 @@ const ru: typeof en = {
   "session.switchBody": "Текущий ход будет прерван. Разговор сохранится.",
   "session.switchBodyBackground": "Фоновые задачи, запущенные агентом, могут остановиться, и агент не узнает об их завершении. Разговор сохранится.",
   "session.switchConfirm": "Переключить",
+  "session.switchBodyIdle": "Агент в терминале будет остановлен и продолжит работу в виде беседы. Разговор сохранится.", // The agent in the terminal stops and continues in conversation view. Your conversation is kept.
+  "session.switchDesktopNote": "В настольном приложении этот сеанс тоже будет показан в виде беседы.", // The desktop app will also show this session in conversation view.
   "session.terminalViewHint": "Нажмите здесь, чтобы вернуться к виду терминала.",
   "session.loading": "Читаем беседу…",
   "session.unavailable": "Эту беседу пока не удаётся прочитать",

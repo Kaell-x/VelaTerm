@@ -1,6 +1,6 @@
 [package]
 name = "velaterm"
-version = "0.2.11"
+version = "0.2.12"
 description = "VelaTerm multi-session terminal manager"
 authors = ["vlinx"]
 edition = "2021"
@@ -38,6 +38,9 @@ gui = [
 # Tauri/WebKit/GTK, so the packaged app runs on hosts without WebKitGTK. It keeps the desktop release
 # identity (see `serve_identifier`) so it opens the same data directory the desktop app always used.
 sidecar = ["dep:font-kit"]
+
+[profile.dev]
+debug = false
 
 [profile.release]
 # Strip desktop and minimal-server release artifacts without affecting development/debugging.

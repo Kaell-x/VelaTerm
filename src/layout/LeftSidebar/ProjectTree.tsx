@@ -34,6 +34,12 @@ import { arrangeProjectsInCollections } from "./projectCollectionLayout";
 import { collectionDialogUrl } from "./collectionNavigation";
 import { newGroupDialogUrl } from "./groupNavigation";
 import { hasProjectDrag, PROJECT_DRAG_MIME, resolveProjectDrop } from "./projectCollectionDrop";
+import {
+  gatherByWorktree,
+  normalizeWorktreePath,
+  useWorktreeCollapse,
+  worktreeNodeIdFor,
+} from "./worktreeNodes";
 
 /** Reference to a node targeted by a context menu or operation. */
 export interface TreeNodeRef {
@@ -89,6 +95,18 @@ type TreeRow =
       depth: number;
       hasKids: boolean;
       expanded: boolean;
+    }
+  | {
+      /** Display-only worktree level gathering sibling sessions that share a worktree; see worktreeNodes.ts. */
+      kind: "worktree";
+      id: string;
+      path: string;
+      name: string;
+      projectId: string;
+      groupId: string | null;
+      parentSessionId: string | null;
+      depth: number;
+      expanded: boolean;
     };
 
 function Chevron({ open }: { open: boolean }) {
@@ -105,6 +123,17 @@ function NodeMarkBadge({ mark }: { mark?: string | null }) {
   return (
     <span className="node-mark" title={labelKey ? t(labelKey) : value}>
       {value}
+    </span>
+  );
+}
+
+/** Worktree row tooltip with the live branch and full path; a component for the same reason as the badge below. */
+function WorktreeRowLabel({ path, name }: { path: string; name: string }) {
+  const t = useT();
+  const branch = useGitBranch(path);
+  return (
+    <span className="nm" title={`${t("spawn.worktreeLabel")}: ${branch || name}\n${path}`}>
+      {name}
     </span>
   );
 }
@@ -368,6 +397,14 @@ export function ProjectTree(h: TreeHandlers) {
     }
     setViewCollapsed(view.id, id, !nodeCollapsed(id, shared));
   };
+  // Worktree nodes have no database row: the primary pane keeps their state in localStorage, split-off panes in
+  // their own override map like every other node.
+  const [worktreeCollapsed, setWorktreeCollapsed] = useWorktreeCollapse();
+  const wtNodeCollapsed = (id: string) => nodeCollapsed(id, worktreeCollapsed[id]);
+  const setWtNodeCollapsed = (id: string, collapsed: boolean) => {
+    if (collapsedOverrides) setViewCollapsed(view.id, id, collapsed);
+    else setWorktreeCollapsed(id, collapsed);
+  };
 
   const filter = treeFilter.trim().toLowerCase();
   const statusFiltering = statusFilter !== null;
@@ -403,6 +440,26 @@ export function ProjectTree(h: TreeHandlers) {
     () => new Set(selection.map((s) => s.id)),
     [selection],
   );
+
+  // Worktree a container already stands for, so sessions in it are not wrapped in a redundant worktree level: the
+  // nearest bound group, else the project root (a project opened at a worktree directory).
+  const groupWorktree = (projectId: string, groupId: string | null): string => {
+    let g = groupId ? groupsById.get(groupId) : undefined;
+    while (g) {
+      if (g.worktreePath) return normalizeWorktreePath(g.worktreePath);
+      g = g.parentGroupId ? groupsById.get(g.parentGroupId) : undefined;
+    }
+    return normalizeWorktreePath(projects.find((p) => p.id === projectId)?.rootPath);
+  };
+  // Children of a session already in a worktree stay direct children when they share it.
+  const sessionWorktree = (s: Session): string =>
+    normalizeWorktreePath(s.worktreePath) || groupWorktree(s.projectId, s.groupId ?? null);
+  // Container a top-level or child session is gathered in, matching the walks below.
+  const worktreeNodeOf = (s: Session): string | null => {
+    const parent = s.parentSessionId ? sessionsById.get(s.parentSessionId) : undefined;
+    if (parent) return worktreeNodeIdFor(s, parent.id, sessionWorktree(parent));
+    return worktreeNodeIdFor(s, s.groupId || s.projectId, groupWorktree(s.projectId, s.groupId ?? null));
+  };
 
   // During filtering, keep matching sessions and their ancestor groups/projects. Under a status filter, ancestor
   // name matches alone do not expose empty groups; name and status filters may still combine.
@@ -520,6 +577,20 @@ export function ProjectTree(h: TreeHandlers) {
   // Flattened visible order for Shift-range selection.
   const flat = useMemo(() => {
     const out: SelNode[] = [];
+    // Worktree nodes are not selectable, but a collapsed one hides its sessions from range selection.
+    const siblingWalk = (
+      siblings: Session[],
+      containerId: string,
+      containerWt: string,
+      ancestorMatched: boolean,
+    ) => {
+      for (const item of gatherByWorktree(siblings, containerId, containerWt)) {
+        if (item.kind === "session") sessionWalk(item.session, ancestorMatched);
+        else if (filtering || !wtNodeCollapsed(item.id)) {
+          for (const s of item.sessions) sessionWalk(s, ancestorMatched);
+        }
+      }
+    };
     const sessionWalk = (s: Session, ancestorMatched: boolean) => {
       out.push({ id: s.id, kind: "session" });
       const expanded = filtering ? true : !nodeCollapsed(s.id, s.collapsed);
@@ -527,7 +598,7 @@ export function ProjectTree(h: TreeHandlers) {
       const matched = ancestorMatched || nameHit(s.name);
       let kids = sessions.filter((c) => c.parentSessionId === s.id);
       if (filtering && !matched) kids = kids.filter((c) => sessionVisible(c));
-      for (const k of kids) sessionWalk(k, matched);
+      siblingWalk(kids, s.id, sessionWorktree(s), matched);
     };
     const walk = (
       projectId: string,
@@ -556,7 +627,9 @@ export function ProjectTree(h: TreeHandlers) {
       if (filtering && !ancestorMatched) {
         childSessions = childSessions.filter((s) => sessionVisible(s));
       }
-      for (const s of childSessions) sessionWalk(s, ancestorMatched);
+      siblingWalk(
+        childSessions, parentGroupId || projectId, groupWorktree(projectId, parentGroupId), ancestorMatched,
+      );
     };
     for (const entry of projectEntries) {
       const p = entry.project;
@@ -568,13 +641,34 @@ export function ProjectTree(h: TreeHandlers) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     projects, groups, sessions, filter, statusFiltering, statusFilterIds, markFilter,
-    visGroups, visProjects, collapsedOverrides, projectEntries,
+    visGroups, visProjects, collapsedOverrides, projectEntries, worktreeCollapsed,
   ]);
 
   // Flatten the visible tree, including pinned temporary draft types, into virtualized render rows matching the old
   // recursive order/depth. Keep this separate from persistent-only `flat`; temporary rows cannot enter range selection.
   const rows = useMemo(() => {
     const out: TreeRow[] = [];
+    // Sibling sessions sharing a worktree go one level deeper, under a worktree row placed where the first sat.
+    const siblingWalk = (
+      siblings: Session[],
+      container: { projectId: string; groupId: string | null; parentSessionId: string | null },
+      containerWt: string,
+      depth: number,
+      ancestorMatched: boolean,
+    ) => {
+      const containerId = container.parentSessionId || container.groupId || container.projectId;
+      for (const item of gatherByWorktree(siblings, containerId, containerWt)) {
+        if (item.kind === "session") {
+          sessionWalk(item.session, depth, ancestorMatched);
+          continue;
+        }
+        const expanded = filtering ? true : !wtNodeCollapsed(item.id);
+        out.push({
+          kind: "worktree", id: item.id, path: item.path, name: item.name, ...container, depth, expanded,
+        });
+        if (expanded) for (const s of item.sessions) sessionWalk(s, depth + 1, ancestorMatched);
+      }
+    };
     // Session subtree, matching the former renderSessionNodes order.
     const sessionWalk = (s: Session, depth: number, ancestorMatched: boolean) => {
       const matched = ancestorMatched || nameHit(s.name);
@@ -584,7 +678,11 @@ export function ProjectTree(h: TreeHandlers) {
       const expanded = filtering ? true : !nodeCollapsed(s.id, s.collapsed);
       out.push({ kind: "session", id: s.id, session: s, depth, hasKids, expanded });
       if (hasKids && expanded) {
-        for (const k of kids) sessionWalk(k, depth + 1, matched);
+        siblingWalk(
+          kids,
+          { projectId: s.projectId, groupId: s.groupId ?? null, parentSessionId: s.id },
+          sessionWorktree(s), depth + 1, matched,
+        );
       }
     };
     // Groups followed by top-level sessions at the same depth, matching renderChildren.
@@ -618,7 +716,11 @@ export function ProjectTree(h: TreeHandlers) {
       if (filtering && !ancestorMatched) {
         childSessions = childSessions.filter((s) => sessionVisible(s));
       }
-      for (const s of childSessions) sessionWalk(s, depth, ancestorMatched);
+      siblingWalk(
+        childSessions,
+        { projectId, groupId: parentGroupId, parentSessionId: null },
+        groupWorktree(projectId, parentGroupId), depth, ancestorMatched,
+      );
     };
 
     for (const entry of projectEntries) {
@@ -631,7 +733,7 @@ export function ProjectTree(h: TreeHandlers) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     projects, groups, sessions, filter, statusFiltering, statusFilterIds, markFilter,
-    visGroups, visProjects, filtering, collapsedOverrides, projectEntries,
+    visGroups, visProjects, filtering, collapsedOverrides, projectEntries, worktreeCollapsed,
   ]);
 
   // Exact row heights are compact 24, regular 28, or comfy 32, reduced by 3 in compact navigation. Supplying this
@@ -779,6 +881,16 @@ export function ProjectTree(h: TreeHandlers) {
       return;
     }
     let changed = false;
+    // The session and each ancestor session may sit under a collapsed worktree node of its own container.
+    let wtSession: Session | undefined = s;
+    while (wtSession) {
+      const wtId = worktreeNodeOf(wtSession);
+      if (wtId && wtNodeCollapsed(wtId)) {
+        setWtNodeCollapsed(wtId, false);
+        changed = true;
+      }
+      wtSession = wtSession.parentSessionId ? sessionsById.get(wtSession.parentSessionId) : undefined;
+    }
     let ps = s.parentSessionId ? sessionsById.get(s.parentSessionId) : undefined;
     while (ps) {
       if (ps.collapsed) {
@@ -1129,6 +1241,36 @@ export function ProjectTree(h: TreeHandlers) {
     );
   };
 
+  // A worktree row stands for its container: dropping sessions on it moves them into that group, project root,
+  // or parent session. The worktree itself is the sessions' directory and cannot change through a move.
+  type WorktreeRow = Extract<TreeRow, { kind: "worktree" }>;
+  const allowWorktreeDrop = (e: React.DragEvent, id: string) => {
+    if (hasProjectDrag(e.dataTransfer.types)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    setDragOver((prev) => (prev?.id === id && prev.zone === "center" ? prev : { id, zone: "center" }));
+  };
+  const dropOnWorktree = (target: WorktreeRow) => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(null);
+    const p = readPayload(e);
+    if (!p || p.kind !== "session") return;
+    const parent = target.parentSessionId ? sessionsById.get(target.parentSessionId) : undefined;
+    // Never nest a session under itself or its own descendant.
+    const allowed = (id: string) => !parent || (id !== parent.id && !isSessionInSubtree(id, parent));
+    if (p.ids && p.ids.length >= 2) {
+      const ids = p.ids.filter(allowed);
+      if (ids.length > 0) void moveMany(ids, target.projectId, target.groupId, target.parentSessionId);
+      return;
+    }
+    if (!allowed(p.id)) return;
+    void moveNode(
+      "session", p.id, target.projectId, target.groupId, target.parentSessionId, Date.now(),
+    );
+  };
+
   const dragStyle = (id: string): React.CSSProperties | undefined => {
     if (!dragOver || dragOver.id !== id) return undefined;
     if (dragOver.zone === "center") {
@@ -1359,6 +1501,32 @@ export function ProjectTree(h: TreeHandlers) {
               </>
             )}
             {metaButtons(ref, true)}
+          </div>
+        );
+      }
+      case "worktree": {
+        // Display-only level: no selection, menu, or rename. Clicking toggles it like a group.
+        const toggle = () => {
+          if (!filtering) setWtNodeCollapsed(row.id, row.expanded);
+        };
+        return (
+          <div
+            className="row worktree"
+            style={{ paddingLeft: 6 + row.depth * 13, ...dragStyle(row.id) }}
+            onDragOver={(e) => allowWorktreeDrop(e, row.id)}
+            onDragLeave={() => setDragOver((d) => (d?.id === row.id ? null : d))}
+            onDrop={dropOnWorktree(row)}
+            onMouseDown={preventModifierSelect}
+            onClick={toggle}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <span className="tw">
+              <Chevron open={row.expanded} />
+            </span>
+            <span className="ic" style={{ color: "var(--text-dim)" }}>
+              <Icons.branch size={14} />
+            </span>
+            <WorktreeRowLabel path={row.path} name={row.name} />
           </div>
         );
       }

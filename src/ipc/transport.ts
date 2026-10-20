@@ -8,6 +8,7 @@
 
 import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { t } from "../i18n";
 import { genId } from "../genId";
@@ -272,6 +273,19 @@ export function listenNative<T>(
   cb: (payload: T) => void,
 ): Promise<UnlistenFn> {
   return tauriListen<T>(name, (e) => cb(e.payload));
+}
+
+/**
+ * Like `listenNative`, but only for events the desktop process addresses to this window with
+ * `emit_to(label, …)`. A bare Tauri `listen` defaults to target Any and also receives events addressed to
+ * every other window, so one menu action or notification click would act in the main window and in every
+ * remote window at once. Events broadcast to all windows with `emit` still arrive.
+ */
+export function listenOwnWindow<T>(
+  name: string,
+  cb: (payload: T) => void,
+): Promise<UnlistenFn> {
+  return tauriListen<T>(name, (e) => cb(e.payload), { target: getCurrentWindow().label });
 }
 
 // PTY output streams.

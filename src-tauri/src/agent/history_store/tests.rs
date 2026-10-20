@@ -12,61 +12,6 @@ impl<R: Read> Read for Fragmented<R> {
 }
 
 #[test]
-fn document_history_arrays_apply_budgets_per_element_and_keep_late_metadata() {
-    struct Repeated {prefix:Cursor<Vec<u8>>,row:Cursor<Vec<u8>>,remaining:usize,suffix:Cursor<Vec<u8>>}
-    impl Read for Repeated {
-        fn read(&mut self,output:&mut [u8]) -> std::io::Result<usize> {
-            let count=self.prefix.read(output)?;if count>0 {return Ok(count);}
-            while self.remaining>0 {
-                let count=self.row.read(output)?;if count>0 {return Ok(count);}
-                self.remaining-=1;if self.remaining>0 {self.row.set_position(0);}
-            }self.suffix.read(output)
-        }
-    }
-    let source=Repeated {prefix:Cursor::new(b"{\"cwd\":\"/repo\",\"history\":[{}".to_vec()),
-        row:Cursor::new(format!(",{{\"user\":{{\"content\":{{\"Prompt\":{{\"prompt\":\"{}\"}}}}}},\"assistant\":{{\"Response\":{{\"content\":\"Reply\",\"message_id\":\"native\"}}}}}}","x".repeat(PREVIEW_BYTES+1)).into_bytes()),
-        remaining:5000,suffix:Cursor::new(b"],\"conversation_id\":\"selected\"}".to_vec())};
-    let mut parser=Projector::document(source,0);let mut count=0;let mut checkpoints=0;
-    let header=parser.split_object_array("history",&mut |checkpoint| {
-        assert!(checkpoint.raw_end-checkpoint.raw_start<=(CHECKPOINT_BYTES+16) as u64);checkpoints+=1;Ok(())
-    },&mut |record| {
-        count+=1;assert!(record.complete);assert!(record.error.is_none());assert!(record.fields.len()<20);
-        if count>1 {assert_eq!(record.value["assistant"]["Response"]["message_id"],"native");
-            let field=record.fields.iter().find(|field|field.path=="/user/content/Prompt/prompt").unwrap();
-            assert!(field.truncated);assert_eq!(field.decoded_bytes,(PREVIEW_BYTES+1) as u64);}
-        Ok(())
-    }).unwrap();
-    assert_eq!(count,5001);assert_eq!(header.value["conversation_id"],"selected");assert_eq!(header.value["cwd"],"/repo");
-    assert!(header.value["history"].as_array().unwrap().is_empty());assert!(header.fields.len()<5);assert!(checkpoints>5000);
-}
-
-#[test]
-fn split_document_rejects_duplicate_arrays_trailing_content_and_failed_sinks() {
-    for raw in ["{\"history\":[],\"history\":[]}","{\"history\":[]}{}","{\"history\":[{\"a\":1},]}"] {
-        assert!(Projector::document(raw.as_bytes(),0).split_object_array("history",&mut |_|Ok(()),&mut |_|Ok(())).is_err());
-    }
-    let raw="{\"history\":[{\"content\":\"original\"}]}";
-    assert_eq!(Projector::document(raw.as_bytes(),0).split_object_array("history",&mut |_|Err("storage_pressure: full".into()),&mut |_|Ok(())).unwrap_err(),"storage_pressure: full");
-    assert_eq!(Projector::document(raw.as_bytes(),0).split_object_array("history",&mut |_|Ok(()),&mut |_|Err("read_canceled".into())).unwrap_err(),"read_canceled");
-}
-
-#[test]
-fn nested_metadata_arrays_keep_root_fields_and_element_checkpoints_separate() {
-    let turns=(0..2000).map(|number|serde_json::json!({"message_ids":[format!("message-{number}")],"result":{"Ok":{"content":[{"kind":"text","data":"雪😀\\\""}]}}})).collect::<Vec<_>>();
-    let raw=serde_json::json!({"before":"Before","session_state":{"conversation_metadata":{"user_turn_metadatas":turns},"version":"v1"},"session_id":"selected"}).to_string();
-    let mut parser=Projector::document(Fragmented {inner:raw.as_bytes(),bytes:7},0);let mut count=0;let mut checkpoints=Vec::new();
-    let header=parser.split_document_array("/session_state/conversation_metadata/user_turn_metadatas",&mut |piece|{checkpoints.push(piece);Ok(())},&mut |record| {
-        assert!(record.fields.len()<10);assert!(record.start>0);assert_eq!(record.value["message_ids"][0],format!("message-{count}"));count+=1;Ok(())
-    }).unwrap();
-    assert_eq!(count,2000);assert_eq!(header.value["session_state"]["version"],"v1");assert_eq!(header.value["session_id"],"selected");
-    assert!(header.fields.len()<10);
-    for checkpoint in checkpoints {assert!(checkpoint.record_start==0 || checkpoint.raw_start>checkpoint.record_start);
-        assert!(decode_checkpoint(&raw.as_bytes()[checkpoint.raw_start as usize..checkpoint.raw_end as usize]).is_ok());}
-    let duplicate="{\"session_state\":{\"conversation_metadata\":{\"user_turn_metadatas\":[]}},\"session_state\":{}}";
-    assert!(Projector::document(duplicate.as_bytes(),0).split_document_array("/session_state/conversation_metadata/user_turn_metadatas",&mut |_|Ok(()),&mut |_|Ok(())).is_err());
-}
-
-#[test]
 fn projection_matches_json_across_utf8_escapes_and_surrogates() {
     let raw = br#"{"payload":{"text":"a\n\"\\\uD83D\uDE80","arguments":"{\"path\":\"a\\nb\"}"},"type":"response_item","n":-1.25e+2,"b":true,"x":null}"#;
     let expected: serde_json::Value = serde_json::from_slice(raw).unwrap();
@@ -361,31 +306,40 @@ fn synthetic_history_performance_probe() {
 
 fn performance_probe(path:std::path::PathBuf) {
     use crate::models::SessionKind;
+    let kind=match std::env::var("VLX_HISTORY_PROBE_KIND").as_deref() {Ok("claude")=>SessionKind::Claude,Ok("pi")=>SessionKind::Pi,_=>SessionKind::Codex};
     let temp=Temp::new();
     let mut original=std::fs::File::open(&path).unwrap();
     let before=super::source::stamp(&mut original).unwrap();
     let store=super::store::Store::at(&temp.0).unwrap();
-    let source=store.register(SessionKind::Codex,super::source::Segment {path:path.clone(),native_id:"readonly-probe".into(),end_byte:None,end_ordinal:None}).unwrap();
-    let branch=super::api::Branch {store:store.clone(),sources:vec![source.clone()],generation:"probe".into(),kind:SessionKind::Codex,native_id:"readonly-probe".into(),error:None,scope:"test".into(),parent:None};
+    let source=store.register(kind,super::source::Segment {path:path.clone(),native_id:"readonly-probe".into(),end_byte:None,end_ordinal:None}).unwrap();
+    let branch=super::api::Branch {store:store.clone(),sources:vec![source.clone()],generation:"probe".into(),kind,native_id:"readonly-probe".into(),error:None,scope:"test".into(),parent:None};
     let began=std::time::Instant::now();
-    store.scan(SessionKind::Codex,&source,&std::sync::atomic::AtomicBool::new(false),true).unwrap();
+    if kind==SessionKind::Codex {store.scan(kind,&source,&std::sync::atomic::AtomicBool::new(false),true).unwrap();}
     let cold=branch.page(None,None,None).unwrap();
     let cold_ms=began.elapsed().as_millis();
     let began=std::time::Instant::now();
-    store.scan(SessionKind::Codex,&source,&std::sync::atomic::AtomicBool::new(false),false).unwrap();
+    store.scan(kind,&source,&std::sync::atomic::AtomicBool::new(false),false).unwrap();
     let index_ms=began.elapsed().as_millis();
     let began=std::time::Instant::now();
     let warm=branch.page(None,None,None).unwrap();
     let warm_ms=began.elapsed().as_millis();
+    // Paging back to the first row, as a reader scrolling up would.
+    let began=std::time::Instant::now();let mut pages=0;let mut first=warm["rows"][0]["id"].as_str().map(str::to_owned);
+    while let Some(id)=first.take() {
+        let page=branch.page(Some(&id),None,None).unwrap();pages+=1;
+        if page["hasMore"]==true {first=page["rows"][0]["id"].as_str().map(str::to_owned);}
+    }
+    let back_ms=began.elapsed().as_millis();
+    let began=std::time::Instant::now();let prose=super::prose::Prose::new(branch.clone(),&std::sync::atomic::AtomicBool::new(false)).unwrap();
+    let prose_ms=began.elapsed().as_millis();
     assert!(serde_json::to_vec(&cold).unwrap().len()<=PAGE_BYTES);
     assert!(serde_json::to_vec(&warm).unwrap().len()<=PAGE_BYTES);
     let mut original=std::fs::File::open(&path).unwrap();
     let after=super::source::stamp(&mut original).unwrap();
     assert_eq!(before.identity,after.identity);assert_eq!(before.size,after.size);
     assert_eq!(before.modified,after.modified);assert_eq!(before.head_hash,after.head_hash);
-    let conn=store.connect().unwrap();
-    let (records,gaps):(u64,u64)=conn.query_row("SELECT count(*),coalesce(sum(error IS NOT NULL),0) FROM records WHERE source_id=?1 AND generation=?2",
-        rusqlite::params![source.id,source.generation],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    let (records,gaps,memory)={let state=source.current().unwrap();
+        (state.records.len(),state.records.values().filter(|record|record.error.is_some()).count(),state.memory)};
     #[cfg(unix)]
     let rss=unsafe {
         let mut usage=std::mem::MaybeUninit::<libc::rusage>::uninit();
@@ -397,9 +351,10 @@ fn performance_probe(path:std::path::PathBuf) {
     #[cfg(not(unix))]
     let rss:Option<u64>=None;
     eprintln!("history_probe {}",serde_json::json!({"sourceBytes":before.size,"coldMs":cold_ms,"indexMs":index_ms,"warmMs":warm_ms,
-        "coldRows":cold["rows"].as_array().unwrap().len(),"warmRows":warm["rows"].as_array().unwrap().len(),
+        "coldRows":cold["rows"].as_array().unwrap().len(),"knownRows":warm["knownRows"],"outline":warm["userMessages"].as_array().map(Vec::len),
+        "pagesBack":pages,"pagingBackMs":back_ms,"proseMessages":prose.total,"proseMs":prose_ms,"warmRows":warm["rows"].as_array().unwrap().len(),
         "wireBytes":serde_json::to_vec(&warm).unwrap().len(),"records":records,"gaps":gaps,"coverage":warm["coverage"],
-        "indexBytes":std::fs::metadata(&store.path).unwrap().len(),"peakRssBytes":rss,"sourceUnchanged":true}));
+        "indexMemoryBytes":memory,"peakRssBytes":rss,"sourceUnchanged":true}));
 }
 
 
@@ -427,7 +382,7 @@ fn long_tool_parameter_named_id_is_content_instead_of_protocol_identity() {
 }
 
 #[test]
-fn source_native_identity_and_parser_version_invalidate_the_generation() {
+fn a_different_native_identity_never_shares_an_index() {
     use crate::models::SessionKind;
     let temp=Temp::new();
     let branch=indexed(&temp,"{}\n");
@@ -435,9 +390,9 @@ fn source_native_identity_and_parser_version_invalidate_the_generation() {
     let mut segment=old.segment.clone(); segment.native_id="replacement".into();
     let replaced=branch.store.register(SessionKind::Codex,segment.clone()).unwrap();
     assert_ne!(old.generation,replaced.generation);
-    branch.store.connect().unwrap().execute("UPDATE sources SET parser_version=0 WHERE id=?1",[&old.id]).unwrap();
-    let migrated=branch.store.register(SessionKind::Codex,segment).unwrap();
-    assert_ne!(replaced.generation,migrated.generation);
+    // The original identity still names its own index.
+    let again=branch.store.register(SessionKind::Codex,old.segment.clone()).unwrap();
+    assert_eq!(again.generation,old.generation);assert_ne!(again.id,replaced.id);
 }
 
 #[test]
@@ -537,7 +492,7 @@ fn a_running_process_pages_only_rows_recorded_before_its_launch() {
     let temp=Temp::new();let path=temp.0.join("native.jsonl");
     let (mut raw,mut parent)=(String::new(),None);for index in 0..3 {turn(&mut raw,&mut parent,index);}
     let branch=indexed_kind(&temp,&raw,SessionKind::Claude);
-    let cut=super::api::ProcessCut {epoch:7,sizes:vec![(path.clone(),raw.len() as u64)]};
+    let cut=super::api::ProcessCut {sizes:vec![(path.clone(),raw.len() as u64)]};
     assert!(cut.has_history());
     // The launched process appends a turn; the index has not caught up with it yet.
     let mut appended=String::new();turn(&mut appended,&mut parent,3);
@@ -560,7 +515,7 @@ fn a_running_process_pages_only_rows_recorded_before_its_launch() {
     let older=capped.page_with(Some(first),None,None,true).unwrap();
     assert_eq!(older["rows"].as_array().unwrap().len(),2);assert_eq!(older["hasMore"],false);
     // A recording created by the process itself has no earlier rows.
-    let none=super::api::ProcessCut {epoch:7,sizes:Vec::new()};
+    let none=super::api::ProcessCut {sizes:Vec::new()};
     assert!(!none.has_history());
     assert!(full.before_process(&none).unwrap().page_with(None,None,None,true).unwrap()["rows"].as_array().unwrap().is_empty());
 }
@@ -592,10 +547,10 @@ fn codex_recordings_with_completed_items_show_each_message_and_tool_once() {
     let expected=["user:Create codex.txt","assistant:Working on it","tool:FileChange","tool:Bash","user:Again"];
     assert_eq!(view(&branch),expected);
     // Transcript prose still reads the response items, so every message stays authorized and readable.
-    let cancel=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let prose=std::rc::Rc::new(super::prose::Prose::new(branch.clone(),&cancel).unwrap());assert!(prose.total>=3);
+    let cancel=std::sync::atomic::AtomicBool::new(false);
+    let prose=super::prose::Prose::new(branch.clone(),&cancel).unwrap();assert!(prose.total>=3);
     for number in 0..prose.total {
-        let mut text=String::new();super::prose_reader::Reader::new(prose.clone(),number,cancel.clone()).unwrap().read_to_string(&mut text).unwrap();
+        let mut text=Vec::new();prose.body(number,&cancel,&mut text).unwrap();
         assert!(!text.is_empty());
         // A message located through its response-item row lands on the row shown in the view.
         if let Some(row)=prose.row_id(number).unwrap() {
@@ -615,69 +570,18 @@ fn codex_recordings_with_completed_items_show_each_message_and_tool_once() {
 }
 
 #[test]
-fn reclaiming_free_pages_runs_the_vacuum_to_completion() {
-    let temp=Temp::new();let conn=rusqlite::Connection::open(temp.0.join("vacuum.sqlite")).unwrap();
-    conn.execute_batch("PRAGMA auto_vacuum=INCREMENTAL; VACUUM; CREATE TABLE t(v BLOB);").unwrap();
-    for _ in 0..2000 {conn.execute("INSERT INTO t VALUES(zeroblob(4000))",[]).unwrap();}
-    conn.execute("DELETE FROM t",[]).unwrap();
-    let free=|conn:&rusqlite::Connection| conn.query_row("PRAGMA freelist_count",[],|row|row.get::<_,u64>(0)).unwrap();
-    let before=free(&conn);assert!(before>1000);
-    // A single step frees a single page; this is why every earlier call left the file growing.
-    conn.execute_batch("PRAGMA incremental_vacuum;").unwrap();assert!(free(&conn)>=before-1);
-    super::store::reclaim_free_pages(&conn).unwrap();assert_eq!(free(&conn),0);
-}
-
-#[test]
-fn a_checkpointed_wal_is_not_mistaken_for_retained_reads() {
-    let temp=Temp::new();let store=super::store::Store::at(&temp.0).unwrap();let conn=store.connect().unwrap();
-    conn.execute_batch("CREATE TABLE filler(v BLOB); BEGIN;").unwrap();
-    for _ in 0..12000 {conn.execute("INSERT INTO filler VALUES(zeroblob(4000))",[]).unwrap();}
-    conn.execute_batch("COMMIT; DELETE FROM filler;").unwrap();
-    let wal=temp.0.join("chat-index/index.sqlite-wal");
-    // Every frame has been written back; only the file's earlier size remains.
-    conn.query_row("PRAGMA wal_checkpoint(PASSIVE)",[],|_|Ok(())).unwrap();
-    super::cache::check_wal(&store).unwrap();
-    assert!(std::fs::metadata(&wal).map(|meta|meta.len()).unwrap_or(0)<=super::cache::WAL_RESERVE);
-    // A reader that still needs old frames keeps the guard.
-    let reader=store.connect().unwrap();reader.execute_batch("BEGIN; SELECT count(*) FROM filler;").unwrap();
-    conn.execute_batch("BEGIN;").unwrap();for _ in 0..12000 {conn.execute("INSERT INTO filler VALUES(zeroblob(4000))",[]).unwrap();}conn.execute_batch("COMMIT;").unwrap();
-    assert!(super::cache::check_wal(&store).unwrap_err().starts_with("storage_pressure:"));
-    reader.execute_batch("COMMIT;").unwrap();super::cache::check_wal(&store).unwrap();
-    // Another scan writing at the same time blocks the truncation but retains nothing.
-    conn.execute_batch("BEGIN;").unwrap();for _ in 0..12000 {conn.execute("INSERT INTO filler VALUES(zeroblob(4000))",[]).unwrap();}conn.execute_batch("COMMIT;").unwrap();
-    let writer=store.connect().unwrap();writer.execute_batch("BEGIN IMMEDIATE; INSERT INTO filler VALUES(1);").unwrap();
-    assert!(std::fs::metadata(&wal).map(|meta|meta.len()).unwrap_or(0)>super::cache::WAL_RESERVE);
-    super::cache::check_wal(&store).unwrap();
-    writer.execute_batch("COMMIT;").unwrap();
-    drop(writer);drop(reader);drop(conn);
-}
-
-
-
-#[test]
-fn the_derived_budget_grows_to_fit_one_large_recording() {
-    let temp=Temp::new();let store=super::store::Store::at(&temp.0).unwrap();let initial=store.budget();
-    let path=temp.0.join("large.jsonl");let file=std::fs::File::create(&path).unwrap();file.set_len(initial).unwrap();
-    store.register(crate::models::SessionKind::Codex,super::source::Segment {path,native_id:"large".into(),end_byte:None,end_ordinal:None}).unwrap();
-    assert!(store.budget()>=initial*2,"a recording as large as the budget fits after registration");
-    let small=temp.0.join("small.jsonl");std::fs::write(&small,"").unwrap();let grown=store.budget();
-    store.register(crate::models::SessionKind::Codex,super::source::Segment {path:small,native_id:"small".into(),end_byte:None,end_ordinal:None}).unwrap();
-    assert_eq!(store.budget(),grown,"a smaller recording never shrinks the budget");
-}
-
-#[test]
 fn a_scalar_identity_field_verifies_only_its_own_bytes() {
     use std::io::{Seek,SeekFrom,Write};
     let temp=Temp::new();
     let raw=serde_json::json!({"type":"user","uuid":"one","isSidechain":false,"message":{"role":"user","content":"Hello"}}).to_string()+"\n";
-    let branch=indexed_kind(&temp,&raw,crate::models::SessionKind::Claude);let source=&branch.sources[0];let conn=branch.store.connect().unwrap();
-    let (reference,hash):(String,Option<Vec<u8>>)=conn.query_row("SELECT ref,hash FROM fields WHERE source_id=?1 AND path='/isSidechain'",[&source.id],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
-    assert!(hash.is_some(),"a scalar identity carries the hash of its literal");
-    assert_eq!(super::api::read_piece(&conn,source,&reference,0,0).unwrap().0,"false");
+    let branch=indexed_kind(&temp,&raw,crate::models::SessionKind::Claude);let source=&branch.sources[0];
+    let (_,refs)=super::event_stream::read_record(source,0).unwrap();let (_,field)=refs["/isSidechain"].clone();
+    assert!(field.hash.is_some(),"a scalar identity carries the hash of its literal");
+    assert_eq!(super::fields::read_piece(source,&field,0,0).unwrap().0,"false");
     // An edit in place keeps the file identity; the field's own hash still notices it.
     let at=raw.find("false").unwrap() as u64;let mut file=std::fs::OpenOptions::new().write(true).open(&source.segment.path).unwrap();
     file.seek(SeekFrom::Start(at)).unwrap();file.write_all(b"fakse").unwrap();drop(file);
-    assert!(super::api::read_piece(&conn,source,&reference,0,0).unwrap_err().starts_with("source_changed:"));
+    assert!(super::fields::read_piece(source,&field,0,0).unwrap_err().starts_with("source_changed:"));
 }
 
 #[test]
@@ -686,8 +590,9 @@ fn a_compaction_repeating_a_long_history_does_not_make_the_recording_unreadable(
     let history=(0..5000).map(|index|serde_json::json!({"type":"message","role":"user","content":[{"type":"input_text","text":format!("old {index}")}]})).collect::<Vec<_>>();
     let compacted=serde_json::json!({"type":"compacted","payload":{"message":"","replacement_history":history,"replacement_history_metadata":[{"kind":"x"}]}});
     let after=serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"After compaction"}]}});
-    let branch=indexed(&temp,&format!("{compacted}\n{after}\n"));let conn=branch.store.connect().unwrap();
-    let (status,errors):(String,u64)=conn.query_row("SELECT status,(SELECT count(*) FROM records WHERE error IS NOT NULL) FROM sources",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    let branch=indexed(&temp,&format!("{compacted}\n{after}\n"));
+    let (_,status)=branch.sources[0].progress().unwrap();
+    let errors=branch.sources[0].current().unwrap().records.values().filter(|record|record.error.is_some()).count();
     assert_eq!((status.as_str(),errors),("complete",0));
     let rows=branch.page(None,None,None).unwrap()["rows"].as_array().unwrap().clone();
     assert!(rows.iter().any(|row|row.to_string().contains("After compaction")));
@@ -704,9 +609,27 @@ fn a_tree_recording_being_appended_keeps_showing_its_confirmed_branch() {
     let path=branch.sources[0].segment.path.clone();
     std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(line("c",Some("b"),"Third question").as_bytes()).unwrap();
     let source=branch.store.register(crate::models::SessionKind::Claude,super::source::Segment {path,native_id:"thread".into(),end_byte:None,end_ordinal:None}).unwrap();
-    assert_eq!(source.status,"partial");
+    assert_eq!(source.progress().unwrap().1,"partial");
     let appended=super::api::Branch {sources:vec![source],..branch.clone()};
     let page=appended.page(None,None,None).unwrap();
     assert_eq!(page["coverage"],"partial");
     assert_eq!(page["rows"].as_array().unwrap().len(),2,"the branch confirmed before the append stays visible: {page}");
+}
+
+#[test]
+fn recent_pages_carry_the_whole_user_message_outline() {
+    let temp=Temp::new();let mut raw=String::new();
+    for index in 0..150 {
+        for (role,text) in [("user",format!("Question   {index}\n with  space")),("assistant",format!("Answer {index}"))] {
+            raw.push_str(&serde_json::json!({"type":"response_item","payload":{"type":"message","role":role,
+                "content":[{"type":if role=="user" {"input_text"} else {"output_text"},"text":text}]}}).to_string());raw.push('\n');
+        }
+    }
+    let branch=indexed(&temp,&raw);let page=branch.page(None,None,None).unwrap();
+    assert_eq!(page["rows"].as_array().unwrap().len(),60);
+    let outline=page["userMessages"].as_array().unwrap();assert_eq!(outline.len(),150);
+    assert_eq!(outline[0]["text"],"Question 0 with space");assert_eq!(outline[149]["text"],"Question 149 with space");
+    // Every listed message can be located, though most are not on the page.
+    let located=branch.page(None,None,outline[0]["id"].as_str()).unwrap();assert_eq!(located["rows"].as_array().unwrap().last().unwrap()["text"],"Question   0\n with  space");
+    assert!(branch.page(Some(page["rows"][0]["id"].as_str().unwrap()),None,None).unwrap().get("userMessages").is_none());
 }

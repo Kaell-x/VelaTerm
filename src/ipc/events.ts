@@ -2,8 +2,9 @@
 
 import {
   isRemoteWindow,
+  isTauri,
   listen,
-  listenNative,
+  listenOwnWindow,
   type UnlistenFn,
 } from "./transport";
 import type { MirrorSnapshot, RemoteClient } from "./mirror";
@@ -334,6 +335,9 @@ export function onCloneProgress(
  * but their regular `listen` goes over the WebSocket relay to the remote server, so they must listen
  * natively. Terminal split actions are registered here because WKWebView may consume their macOS key
  * equivalents before dispatching a JavaScript keydown event.
+ *
+ * The backend addresses each action to the focused window only. Every window listens for its own label,
+ * otherwise one Cmd+D split the main window and every open remote window at the same time.
  */
 export type MenuAction =
   | "settings"
@@ -347,8 +351,8 @@ export type MenuAction =
 export function onMenuAction(
   cb: (action: MenuAction) => void,
 ): Promise<UnlistenFn> {
-  if (isRemoteWindow) {
-    return listenNative<MenuAction>("menu://action", (payload) => cb(payload));
+  if (isTauri || isRemoteWindow) {
+    return listenOwnWindow<MenuAction>("menu://action", (payload) => cb(payload));
   }
   return listen<MenuAction>("menu://action", (payload) => cb(payload));
 }

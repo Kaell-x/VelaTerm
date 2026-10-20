@@ -1,12 +1,10 @@
 //! Original image fields remain source references. Preview and download reads use verified chunks.
 
-use std::collections::HashMap;
 use std::io::{Read,Write};
 use std::sync::atomic::{AtomicBool,Ordering};
 use base64::{Engine,engine::general_purpose::STANDARD};
-use rusqlite::{params,Connection,OptionalExtension};
 use serde_json::{json,Value};
-use super::{api::{Branch,DecodedFieldReader},projection::Record,store::{RegisteredSource,sql}};
+use super::{adapter::Refs,api::Branch,fields::DecodedFieldReader,projection::Record,store::{FieldMeta,RegisteredSource,State}};
 
 fn data_url(text:&str) -> Option<(&str,usize)> {
     let (mime,rest)=text.strip_prefix("data:")?.split_once(';')?;
@@ -14,13 +12,11 @@ fn data_url(text:&str) -> Option<(&str,usize)> {
     Some((mime,5+mime.len()+8))
 }
 
-pub(super) fn attach(conn:&Connection,source:&RegisteredSource,record:&Record,row:&str) -> Result<(),String> {
-    let mut selected=Vec::new();
-    let mut statement=conn.prepare("SELECT path,decoded_bytes FROM fields WHERE source_id=?1 AND generation=?2 AND record_start=?3 AND encoding='string' ORDER BY raw_start LIMIT 4097").map_err(sql)?;
-    let fields=statement.query_map(params![source.id,source.generation,record.start],|row|Ok((row.get::<_,String>(0)?,row.get::<_,u64>(1)?))).map_err(sql)?;
-    for (index,field) in fields.enumerate() {
-        if index>=super::limits::MAX_FIELDS {return Err("unsupported_record: image field directory exceeds its entry budget".into());}
-        let (path,size)=field.map_err(sql)?;let path=path.as_str();let value=&record.value;
+pub(super) fn attach(state:&mut State,source:&RegisteredSource,record:&Record,row:&str,refs:&Refs) {
+    let _=source;let mut selected=Vec::new();
+    let mut fields=record.fields.iter().filter(|field|field.encoding=="string").collect::<Vec<_>>();fields.sort_by_key(|field|field.start);
+    for field in fields.into_iter().take(super::limits::MAX_FIELDS) {
+        let path=field.path.as_str();let value=&record.value;let size=field.decoded_bytes;
         let image=if path.starts_with("/images/") && path.ends_with("/data") && value["type"]=="dispatch" {
             value.pointer(path.strip_suffix("/data").unwrap()).and_then(|image|image["mimeType"].as_str()).map(|mime|(mime,0))
         } else if let Some(root)=path.strip_suffix("/source/data").filter(|root|root.starts_with("/message/content/")) {
@@ -33,70 +29,73 @@ pub(super) fn attach(conn:&Connection,source:&RegisteredSource,record:&Record,ro
             value.pointer(path).and_then(Value::as_str).and_then(data_url)
         } else {None};
         let Some((mime,prefix))=image.filter(|(mime,_)|mime.len()<=100 && mime.starts_with("image/") && mime.bytes().all(|byte|byte.is_ascii_alphanumeric() || matches!(byte,b'/'|b'-'|b'.'|b'+'))) else {continue;};
-        if size<prefix as u64 {return Err("unsupported_record: image original has an invalid data URL boundary".into());}
+        // An image original with an invalid data URL boundary is not offered as an attachment.
+        if size<prefix as u64 {continue;}
         selected.push((path.to_owned(),format!("attachment:{mime}:{prefix}")));
     }
-    for (path,label) in selected {
-        let reference:String=conn.query_row("SELECT ref FROM fields WHERE source_id=?1 AND generation=?2 AND record_start=?3 AND path=?4",
-            params![source.id,source.generation,record.start,path],|row|row.get(0)).map_err(sql)?;
-        super::adapter::attach(conn,source,row,&label,&[path.clone()],&HashMap::from([(path,reference)]))?;
-    }Ok(())
+    for (path,label) in selected {super::adapter::attach(state,row,&label,&[path],refs);}
 }
 
-pub(super) fn decorate(conn:&Connection,source:&RegisteredSource,row:Value) -> Result<Value,String> {
-    if row["kind"]!="user" {return Ok(row);}
-    let mut statement=conn.prepare("SELECT f.ref,rf.label,f.decoded_bytes FROM row_fields rf JOIN fields f ON f.ref=rf.ref
-        JOIN records r ON r.source_id=f.source_id AND r.generation=f.generation AND r.start=f.record_start
-        WHERE rf.source_id=?1 AND rf.generation=?2 AND rf.row_id=?3 AND rf.label LIKE 'attachment:%' AND r.active=1
-        AND (?4 IS NULL OR r.end<=?4) AND (?5 IS NULL OR r.ordinal IS NULL OR r.ordinal<?5) ORDER BY rf.sequence LIMIT 20").map_err(sql)?;
-    let entries=statement.query_map(params![source.id,source.generation,row["id"].as_str(),source.segment.end_byte,source.segment.end_ordinal],
-        |row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,u64>(2)?))).map_err(sql)?;
-    let mut images=Vec::new();for entry in entries {let (reference,label,bytes)=entry.map_err(sql)?;
-        let (mime,prefix)=label.strip_prefix("attachment:").and_then(|label|label.rsplit_once(':')).ok_or("index_incomplete: image metadata is invalid")?;
-        let prefix:u64=prefix.parse().map_err(|_|"index_incomplete: image boundary is invalid")?;
-        images.push(json!({"attachmentId":format!("history:{reference}"),"mimeType":mime,"sizeBytes":bytes.saturating_sub(prefix),"contentRevision":format!("{}:{reference}",source.generation)}));
+pub(super) fn decorate(state:&State,source:&RegisteredSource,row:Value) -> Value {
+    if row["kind"]!="user" {return row;}
+    let mut images=Vec::new();
+    let mut fields=state.row_fields.get(row["id"].as_str().unwrap_or_default()).into_iter().flatten()
+        .filter(|field|field.label.starts_with("attachment:")).collect::<Vec<_>>();
+    fields.sort_by_key(|field|field.sequence);
+    for field in fields {
+        if images.len()>=20 {break;}
+        let Some(meta)=state.fields.get(&field.reference) else {continue;};
+        if !super::api::record_visible(state,source,meta.record_start) {continue;}
+        let Some((mime,prefix))=field.label.strip_prefix("attachment:").and_then(|label|label.rsplit_once(':')) else {continue;};
+        let Ok(prefix)=prefix.parse::<u64>() else {continue;};
+        images.push(json!({"attachmentId":format!("history:{}",field.reference),"mimeType":mime,"sizeBytes":meta.decoded_bytes.saturating_sub(prefix),
+            "contentRevision":format!("{}:{}",source.generation,field.reference)}));
     }
-    let mut row=row;if !images.is_empty() {row["images"]=json!(images);row["bodyAvailable"]=json!(true);}Ok(row)
+    // Images load through their attachment ids. `bodyAvailable` says only that the text preview is cut short;
+    // setting it for an image would offer "Read complete content" under a short message and hide its copy and edit.
+    let mut row=row;if !images.is_empty() {row["images"]=json!(images);}row
 }
 
-pub struct Facts {pub mime:String,pub prefix:u64,pub encoded:u64,pub revision:String,pub source:RegisteredSource}
-pub fn is_attachment(branch:&Branch,reference:&str) -> Result<bool,String> {
-    branch.authorize(reference)?;
-    branch.store.connect()?.query_row("SELECT EXISTS(SELECT 1 FROM row_fields WHERE ref=?1 AND label LIKE 'attachment:%')",[reference],|row|row.get(0)).map_err(sql)
+fn label(branch:&Branch,reference:&str) -> Result<Option<String>,String> {
+    let (source,_)=branch.authorize(reference)?;let state=source.current()?;
+    Ok(state.field_rows.get(reference).into_iter().flatten().filter_map(|row|state.row_fields.get(row)).flatten()
+        .find(|field|field.reference==reference && field.label.starts_with("attachment:")).map(|field|field.label.clone()))
 }
+
+pub struct Facts {pub mime:String,pub prefix:u64,pub encoded:u64,pub revision:String,pub source:RegisteredSource,pub field:FieldMeta}
+pub fn is_attachment(branch:&Branch,reference:&str) -> Result<bool,String> {Ok(label(branch,reference)?.is_some())}
 pub fn facts(branch:&Branch,reference:&str,expected:Option<&str>) -> Result<Facts,String> {
-    let (source,start,path,size,_)=branch.authorize(reference)?;let (revision,_)=branch.detail_facts(reference,expected)?;
-    let label:Option<String>=branch.store.connect()?.query_row("SELECT label FROM row_fields WHERE source_id=?1 AND generation=?2 AND ref=?3 AND label LIKE 'attachment:%' LIMIT 1",
-        params![source.id,source.generation,reference],|row|row.get(0)).optional().map_err(sql)?;
-    let label=label.ok_or("detail_unavailable: this detail is not an image attachment")?;
+    let (source,field)=branch.authorize(reference)?;let (revision,_)=branch.detail_facts(reference,expected)?;
+    let label=label(branch,reference)?.ok_or("detail_unavailable: this detail is not an image attachment")?;
     let (mime,prefix)=label.strip_prefix("attachment:").and_then(|label|label.rsplit_once(':')).ok_or("index_incomplete: image metadata is invalid")?;
     let prefix=prefix.parse::<u64>().map_err(|_|"index_incomplete: image boundary is invalid")?;
-    let encoded=size.checked_sub(prefix).ok_or("index_incomplete: image boundary is outside the original")?;
-    let conn=branch.store.connect()?;
+    let encoded=field.decoded_bytes.checked_sub(prefix).ok_or("index_incomplete: image boundary is outside the original")?;
     if prefix>0 {
-        let (head,_,_,_)=super::api::read_piece(&conn,&source,reference,0,0)?;
+        let (head,_,_,_)=super::fields::read_piece(&source,&field,0,0)?;
         if !head.starts_with(&format!("data:{mime};base64,")) {return Err("source_changed: image data URL identity changed".into());}
     } else {
-        let metadata=if let Some(root)=path.strip_suffix("/source/data") {format!("{root}/source/media_type")}
-            else if let Some(root)=path.strip_suffix("/data") {format!("{root}/mimeType")}
+        let metadata=if let Some(root)=field.path.strip_suffix("/source/data") {format!("{root}/source/media_type")}
+            else if let Some(root)=field.path.strip_suffix("/data") {format!("{root}/mimeType")}
             else {return Err("index_incomplete: image metadata has no verified original field".into());};
-        let reference:String=conn.query_row("SELECT ref FROM fields WHERE source_id=?1 AND generation=?2 AND record_start=?3 AND path=?4",
-            params![source.id,source.generation,start,metadata],|row|row.get(0)).map_err(sql)?;
-        let (value,_,_,length)=super::api::read_piece(&conn,&source,&reference,0,0)?;
-        if length>100 || value!=mime {return Err("source_changed: image media type changed".into());}
+        // The media type is read from the original record again.
+        let record=super::store::reproject(&source,field.record_start,&mut |_|Ok(()))?;
+        let value=record.value.pointer(&metadata).and_then(Value::as_str).ok_or("index_incomplete: image metadata has no verified original field")?;
+        if value.len()>100 || value!=mime {return Err("source_changed: image media type changed".into());}
     }
-    Ok(Facts {mime:mime.into(),prefix,encoded,revision,source})
+    Ok(Facts {mime:mime.into(),prefix,encoded,revision,source,field})
 }
 
 pub fn write(branch:&Branch,reference:&str,expected:Option<&str>,writer:&mut impl Write,cancel:&AtomicBool) -> Result<u64,String> {
-    let facts=facts(branch,reference,expected)?;let conn=branch.store.connect()?;
-    let reader=DecodedFieldReader::new(&conn,&facts.source,reference,facts.prefix,None,0)?;
+    let facts=facts(branch,reference,expected)?;
+    let reader=DecodedFieldReader::new(&facts.source,&facts.field,facts.prefix,None,0)?;
     let mut reader=base64::read::DecoderReader::new(reader,&STANDARD);let mut buffer=[0;super::limits::CHECKPOINT_BYTES];let mut bytes=0u64;
     loop {
         if cancel.load(Ordering::Relaxed) {return Err("read_canceled".into());}
         // Recheck the parent scope and attachment revision before every separately verified chunk.
         branch.detail_facts(reference,Some(&facts.revision))?;
-        let count=reader.read(&mut buffer).map_err(|error|format!("detail_unavailable: image original cannot be decoded: {error}"))?;
+        let count=reader.read(&mut buffer).map_err(|error|{
+            let error=error.to_string();if error.starts_with("source_changed:") {error} else {format!("detail_unavailable: image original cannot be decoded: {error}")}
+        })?;
         if count==0 {break;}writer.write_all(&buffer[..count]).map_err(|_|"storage_pressure: image original could not be written")?;bytes+=count as u64;
     }self::facts(branch,reference,Some(&facts.revision))?;Ok(bytes)
 }
@@ -199,7 +198,7 @@ mod tests {
     }
     fn reference(branch:&Branch) -> String {
         let page=branch.page(None,None,None).unwrap();assert!(page.to_string().len()<16*1024);
-        let row=&page["rows"][0];assert_eq!(row["images"].as_array().unwrap().len(),1);assert_eq!(row["bodyAvailable"],true);
+        let row=&page["rows"][0];assert_eq!(row["images"].as_array().unwrap().len(),1);assert_ne!(row["bodyAvailable"],true);
         let reference=row["images"][0]["attachmentId"].as_str().unwrap().strip_prefix("history:").unwrap().to_owned();
         let manifest=branch.manifest(row["id"].as_str().unwrap(),0).unwrap();
         assert!(manifest["fields"].as_array().unwrap().iter().any(|field|field["detailRef"]==reference && field["kind"]=="image" && field["mimeType"]=="image/png"));reference
@@ -224,21 +223,6 @@ mod tests {
     }
 
     #[test]
-    fn outgoing_images_are_hidden_until_delivery_and_survive_index_rebuild() {
-        let temp=super::super::tests::Temp::new();let archive=super::super::live::Archive::at(&temp.0).unwrap();let cancel=AtomicBool::new(false);
-        let encoded=STANDARD.encode(image());let mut journal=super::super::live::Journal::new(archive.clone(),"scope",7).unwrap();
-        journal.append("dispatch:image",&json!({"type":"dispatch","id":"image","text":"Question","images":[{"mimeType":"image/png","data":encoded}]}),&cancel).unwrap();
-        let frame=journal.append("delivery:image",&json!({"type":"delivery","id":"image","state":"pipe_written"}),&cancel).unwrap();
-        archive.bind_outgoing(&frame,crate::models::SessionKind::Codex,"scope",7,"thread").unwrap();
-        let store=super::super::store::Store::at(&temp.0).unwrap();let source=super::super::protocol_source::register(&store,crate::models::SessionKind::Codex,&frame.reference,"scope",7,"thread").unwrap();
-        store.scan(crate::models::SessionKind::Codex,&source,&cancel,false).unwrap();
-        let branch=Branch {store,sources:vec![source],generation:"branch".into(),kind:crate::models::SessionKind::Codex,native_id:"thread".into(),error:None,scope:"scope".into(),parent:None};
-        let reference=reference(&branch);assert_eq!(resolve(&branch,&reference,None,true).unwrap().data,encoded);
-        let conn=branch.store.connect().unwrap();conn.execute_batch("DELETE FROM rows;DELETE FROM row_parts;DELETE FROM row_fields;UPDATE sources SET indexed_bytes=0,status='partial'").unwrap();drop(conn);
-        branch.store.scan(branch.kind,&branch.sources[0],&cancel,false).unwrap();assert_eq!(self::reference(&branch),reference);assert_eq!(resolve(&branch,&reference,None,true).unwrap().data,encoded);
-    }
-
-    #[test]
     fn downloads_stream_large_originals_and_cancellation_stops_after_one_bounded_chunk() {
         let temp=super::super::tests::Temp::new();let mut bytes=image();bytes.resize(6*1024*1024,0);let encoded=STANDARD.encode(&bytes);
         let branch=super::super::tests::indexed(&temp,&(native(crate::models::SessionKind::Codex,&encoded).to_string()+"\n"));let reference=reference(&branch);
@@ -252,6 +236,7 @@ mod tests {
 
     #[test]
     fn opencode_native_image_parts_keep_binary_downloads_scoped_and_leave_the_database_unchanged() {
+        use rusqlite::{params,Connection};
         let temp=super::super::tests::Temp::new();let path=temp.0.join("opencode.sqlite");let conn=Connection::open(&path).unwrap();
         conn.execute_batch("CREATE TABLE session(id TEXT PRIMARY KEY,revert TEXT);CREATE TABLE message(id TEXT PRIMARY KEY,session_id TEXT,time_created INTEGER,time_updated INTEGER,data TEXT);
             CREATE TABLE part(id TEXT PRIMARY KEY,session_id TEXT,message_id TEXT,time_created INTEGER,time_updated INTEGER,data TEXT);INSERT INTO session VALUES('selected',NULL);INSERT INTO session VALUES('foreign',NULL);").unwrap();
@@ -260,8 +245,8 @@ mod tests {
             conn.execute("INSERT INTO message VALUES(?1,?1,1,1,?2)",params![scope,json!({"role":"user","time":{"created":1}}).to_string()]).unwrap();
             conn.execute("INSERT INTO part VALUES(?1,?1,?1,1,1,?2)",params![scope,json!({"type":"file","mime":"image/png","url":format!("data:image/png;base64,{encoded}")}).to_string()]).unwrap();
         }drop(conn);let before=std::fs::read(&path).unwrap();
-        let store=super::super::store::Store::at(&temp.0).unwrap();let source=super::super::native_database::register(&store,path.clone(),"selected").unwrap();
-        super::super::native_database::scan(&store,&source,&AtomicBool::new(false)).unwrap();
+        let store=super::super::store::Store::at(&temp.0).unwrap();let source=super::super::opencode::register(&store,path.clone(),"selected").unwrap();
+        store.scan(crate::models::SessionKind::Opencode,&source,&AtomicBool::new(false),false).unwrap();
         let branch=Branch {store,sources:vec![source],generation:"branch".into(),kind:crate::models::SessionKind::Opencode,native_id:"selected".into(),error:None,scope:"selected".into(),parent:None};
         let reference=reference(&branch);assert_eq!(resolve(&branch,&reference,None,true).unwrap().data,encoded);
         assert_eq!(branch.page(None,None,None).unwrap()["knownRows"],1);assert_eq!(std::fs::read(path).unwrap(),before);

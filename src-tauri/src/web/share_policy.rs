@@ -30,6 +30,13 @@ impl ShareScope {
         }
     }
 
+    /// Whether a session inside the scope is offered to the visitor. Conversation sessions are, and so are
+    /// terminal-view agents whose kind has a conversation view: the visitor reads their record and may be
+    /// asked to switch them. Other agents would open into a terminal whose PTY commands are denied.
+    fn lists(&self, session: &Session) -> bool {
+        self.contains(session) && (session.engine == "chat" || session.kind.supports_chat())
+    }
+
     /// Whether a session exists on the host and falls inside this scope. Used before registering per-session
     /// event forwarding for a share connection, so no session outside the grant can push events to it.
     pub fn covers_session(&self, app: &AppCtx, session_id: &str) -> bool {
@@ -48,7 +55,7 @@ impl ShareScope {
             let sessions = repo::list_all_sessions(&conn)?;
             let projects = repo::list_tree(&conn)?.projects;
             // Do not serialize Session directly: it contains paths, environment and launch arguments.
-            let visible: Vec<Value> = sessions.iter().filter(|s| self.contains(s)).map(|s| {
+            let visible: Vec<Value> = sessions.iter().filter(|s| self.lists(s)).map(|s| {
                 json!({"id":s.id,"name":s.name,"kind":s.kind,"engine":s.engine,
                     "projectId":s.project_id,"projectName":projects.iter().find(|p|p.id == s.project_id).map(|p|p.name.as_str()),
                     "canChat":s.engine == "chat" && s.kind.supports_chat()})
@@ -171,6 +178,10 @@ pub fn dispatch_shared(
             return Ok(json!({"enabled":false,"rev":0,"source":Value::Null,"state":Value::Null}))
         }
         "list_agent_presets" | "list_shells" => return Ok(json!([])),
+        // Lets the shared shell decide whether to offer the view switch below; the switch re-checks it.
+        "share_access" => {
+            return Ok(json!({"canSwitchEngine": super::public_relay::visitor_is_owner(app, scope)}))
+        }
         // Machine panels stay host-only; the shared session view has no use for them.
         "process_stats" | "system_stats" | "usage_refresh" | "model_catalog_refresh" | "list_dir"
         | "search_session_content" => return Err(unavailable()),
@@ -202,8 +213,19 @@ pub fn dispatch_shared(
     if !scope.contains(&session) {
         return Err("Session is outside the shared scope".into());
     }
-    if cmd == "mobile_notification_preview" {
+    if cmd == "mobile_notification_preview" || (cmd == "session_mark_read" && scope.lists(&session)) {
         return super::dispatch::dispatch(app, cmd, args, who, origin);
+    }
+    // Only the host's own account may move a terminal-view agent into the conversation view, and only in
+    // that direction. The switch stops the terminal agent and changes the view on the host as well.
+    if cmd == "set_session_engine" {
+        if !super::public_relay::visitor_is_owner(app, scope) || !session.kind.supports_chat() {
+            return Err(unavailable());
+        }
+        if args.get("engine").and_then(Value::as_str) != Some("chat") {
+            return Err(unavailable());
+        }
+        return super::dispatch::dispatch(app, cmd, &json!({"sessionId":sid,"engine":"chat"}), who, origin);
     }
     if session.engine != "chat" && !readonly_history(cmd,args) {
         return Err(
@@ -270,7 +292,8 @@ fn permission_args(app: &AppCtx, sid: &str, args: &Value) -> Result<Value, Strin
 
 /// Commands the shared in-app session view may call. Everything else is denied; the visitor gets exactly the
 /// conversation surface the product promises. Interactive commands that would reconfigure or end the host
-/// session (rewind, clear, engine switch, MCP, agent auth, model changes) are intentionally absent.
+/// session (rewind, clear, MCP, agent auth, model changes) are intentionally absent. The engine switch is
+/// listed only so `dispatch_shared` can admit the owner's one-way move into the conversation view.
 fn app_command(cmd: &str) -> bool {
     matches!(
         cmd,
@@ -280,6 +303,7 @@ fn app_command(cmd: &str) -> bool {
             | "usage_snapshot"
             | "agent_permission_catalog"
             | "list_tree"
+            | "set_session_engine"
             | "session_states"
             | "session_permission_state"
             | "session_mark_read"
@@ -317,13 +341,8 @@ fn app_command(cmd: &str) -> bool {
 /// blanked rather than removed because the frontend tree renderer dereferences some of them.
 fn filtered_tree(app: &AppCtx, scope: &ShareScope) -> Result<Value, String> {
     let tree = crate::command_core::list_tree(app)?;
-    // Only conversation sessions are usable through a share: a terminal-engine agent would open into a
-    // terminal view whose PTY commands are denied, so it never appears in the visitor's tree.
-    let allowed: Vec<&Session> = tree
-        .sessions
-        .iter()
-        .filter(|s| scope.contains(s) && s.engine == "chat")
-        .collect();
+    // Terminal-view agents appear only when they have a conversation view; see `ShareScope::lists`.
+    let allowed: Vec<&Session> = tree.sessions.iter().filter(|s| scope.lists(s)).collect();
     let project_ids: std::collections::HashSet<&str> =
         allowed.iter().map(|s| s.project_id.as_str()).collect();
     let group_by_id: std::collections::HashMap<&str, &crate::models::Group> =
@@ -380,7 +399,7 @@ fn filtered_session_states(app: &AppCtx, scope: &ShareScope) -> Result<Value, St
     let allowed: std::collections::HashSet<&str> = tree
         .sessions
         .iter()
-        .filter(|s| scope.contains(s) && s.engine == "chat")
+        .filter(|s| scope.lists(s))
         .map(|s| s.id.as_str())
         .collect();
     let states: std::collections::HashMap<String, crate::session_state::SessionState> =
@@ -646,6 +665,55 @@ mod shared_surface_tests {
             dispatch_shared(&app, &scope, "get_session_cwd", &json!({"sessionId": session.id}), "ws-test", origin).unwrap(),
             Value::Null
         );
+        drop(app);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Terminal-view agents that have a conversation view are listed with their state and readable record,
+    /// but stay read-only; agents without a conversation view stay hidden. A visitor who is not the host's
+    /// own account cannot switch the view.
+    #[test]
+    fn terminal_view_agents_are_listed_read_only() {
+        use crate::host::HeadlessHost;
+        let dir = std::env::temp_dir().join(format!("share-tui-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = crate::db::Db::open(&dir.join("test.db")).unwrap();
+        let (project, tui, other) = {
+            let conn = db.conn.lock().unwrap();
+            let project = repo::create_virtual_project(&conn, "Shared").unwrap();
+            let tui = repo::create_session(&conn, &project.id, None, "Claude TUI", SessionKind::Claude, None, None, None, None, None).unwrap();
+            repo::set_session_engine(&conn, &tui.id, "tui").unwrap();
+            let other = repo::create_session(&conn, &project.id, None, "Kiro", SessionKind::Kiro, None, None, None, None, None).unwrap();
+            (project, tui, other)
+        };
+        let app = AppCtx::Headless(std::sync::Arc::new(HeadlessHost::new(dir.clone(), db)));
+        let scope = ShareScope {
+            scope: "project".into(),
+            target_id: Some(project.id),
+            push_authority: None,
+        };
+        let origin = crate::web::dispatch::CallOrigin::Remote;
+        let tree = dispatch_shared(&app, &scope, "list_tree", &json!({}), "ws-test", origin).unwrap();
+        let ids: Vec<&Value> = tree["sessions"].as_array().unwrap().iter().map(|s| &s["id"]).collect();
+        assert_eq!(ids, vec![&json!(tui.id)]);
+        let picker = scope.dispatch(&app, "shared_sessions", &json!({})).unwrap();
+        assert_eq!(picker.as_array().unwrap().len(), 1);
+        assert_eq!(picker[0]["id"], tui.id);
+        assert!(dispatch_shared(&app, &scope, "read_agent_chat", &json!({"sessionId": tui.id}), "ws-test", origin).is_ok());
+        assert!(dispatch_shared(&app, &scope, "session_mark_read", &json!({"sessionId": tui.id}), "ws-test", origin).is_ok());
+        assert!(dispatch_shared(&app, &scope, "session_mark_read", &json!({"sessionId": other.id}), "ws-test", origin).is_err());
+        assert!(dispatch_shared(&app, &scope, "chat_send", &json!({"sessionId": tui.id, "text": "hi"}), "ws-test", origin).is_err());
+        assert_eq!(
+            dispatch_shared(&app, &scope, "share_access", &json!({}), "ws-test", origin).unwrap(),
+            json!({"canSwitchEngine": false})
+        );
+        assert_eq!(
+            dispatch_shared(&app, &scope, "set_session_engine", &json!({"sessionId": tui.id, "engine": "chat"}), "ws-test", origin).unwrap_err(),
+            unavailable()
+        );
+        let conn = app.db().conn.lock().unwrap();
+        assert_eq!(repo::get_session(&conn, &tui.id).unwrap().unwrap().engine, "tui");
+        drop(conn);
         drop(app);
         std::fs::remove_dir_all(dir).unwrap();
     }

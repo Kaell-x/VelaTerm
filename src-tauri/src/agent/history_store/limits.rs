@@ -12,5 +12,3 @@ pub const PAGE_BYTES: usize = 512 * 1024;
 pub const DETAIL_BYTES: usize = 64 * 1024;
 pub const PAGE_ROWS: usize = 60;
 pub const TAIL_BYTES: u64 = 8 * 1024 * 1024;
-pub const SCHEMA_VERSION: u32 = 6;
-pub const PARSER_VERSION: u32 = 15;

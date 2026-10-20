@@ -385,6 +385,12 @@
 .m-recorded-composer textarea { outline: none; }
 .m-recorded-composer:focus-within { border-color: var(--accent-line); }
 
+/* Suggests the conversation view for a terminal-view agent; on a share it replaces the composer. */
+.m-recorded-switch { margin: 8px 12px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-2); display: flex; align-items: center; gap: 12px; font-size: 14px; line-height: 1.5; color: var(--text-secondary); }
+.m-recorded-switch p { flex: 1; min-width: 0; margin: 0; }
+.m-recorded-switch .vlx-btn { flex: none; min-height: 44px; }
+.m-recorded-switch:last-child { margin-bottom: max(12px, env(safe-area-inset-bottom)); }
+
 .m-recorded-input { display: flex; align-items: flex-start; gap: 8px; }
 .m-recorded-input textarea { flex: 1; min-width: 0; }
 .m-recorded-input .sv-send { width: 44px; height: 44px; }

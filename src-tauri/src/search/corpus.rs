@@ -5,7 +5,8 @@
 //! rowid, into the word table `session_words` with jieba boundaries marked; the query side keeps the
 //! semantics of the earlier in-database index (words first, then trigram, then LIKE for short terms).
 //!
-//! Transcripts are read through the bounded prose reader one message at a time, never as a whole file.
+//! Transcripts are read straight from their files, and OpenCode and Kiro from their own databases
+//! ([`super::extract`]); searching a conversation never builds a history index for it.
 //! A session is indexed in one transaction, so a search sees either its previous rows or its new rows.
 //! Each session records a fingerprint of its source; an unchanged session costs one file stat, and an
 //! append that keeps the history generation re-indexes only from the last indexed message on.
@@ -15,20 +16,26 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path,PathBuf};
-use std::rc::Rc;
 use std::sync::{Arc,Mutex,OnceLock};
-use std::sync::atomic::{AtomicBool,Ordering};
+use std::sync::atomic::{AtomicBool,AtomicUsize,Ordering};
 
 use rusqlite::{params,params_from_iter,Connection,OptionalExtension};
 
-use crate::agent::history_store::{self as history,api::Branch,prose::{Prose,Start},prose_reader::Reader,store::Store};
 use crate::agent::transcript;
 use crate::host::AppCtx;
 use crate::models::SessionKind;
 use super::{tokenize,SearchMatch,SearchScope,SessionSearchHit,limit_chars};
 
-/// Extraction and schema version; a different stored version rebuilds the whole file.
-const VERSION:i64=2;
+/// Extraction and schema version. Each version builds its own file; until that file completes a
+/// background pass, searches read an earlier version's file for the sessions it has not indexed yet,
+/// and the pass that completes removes the earlier files.
+const VERSION:i64=5;
+/// Oldest version whose `session_fts` and `session_words` rows, and `corpus_state` fingerprints, this
+/// code reads with the same meaning, message numbering included. Raise it when a version changes them.
+/// Version 5 numbers a forked Codex rollout from the start of its parent's history but leaves this at 1:
+/// only forks are renumbered, their earlier hits still match, and the first complete pass retires them,
+/// whereas raising it would leave every session out of search until that pass ends.
+const QUERYABLE_SINCE:i64=1;
 /// Bytes of message text per fragment. Phrase and AND matches hold within one fragment.
 pub(super) const CHUNK_BYTES:usize=64*1024;
 /// Snippets returned per session; further fragments only count toward `match_count`.
@@ -42,12 +49,13 @@ const SCHEMA:&str="
 CREATE TABLE IF NOT EXISTS corpus_meta(version INTEGER NOT NULL);
 CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
   text, session_id UNINDEXED, source UNINDEXED, message_index UNINDEXED, ordinal UNINDEXED, role UNINDEXED, ts UNINDEXED,
-  tokenize = 'trigram remove_diacritics 1');
+  record_offset UNINDEXED, tokenize = 'trigram remove_diacritics 1');
 CREATE VIRTUAL TABLE IF NOT EXISTS session_words USING fts5(
-  words, session_id UNINDEXED, tokenize = 'porter unicode61 remove_diacritics 1');
+  words, content = '', contentless_delete = 1, tokenize = 'porter unicode61 remove_diacritics 1');
 CREATE TABLE IF NOT EXISTS corpus_state(
   session_id TEXT PRIMARY KEY, source TEXT NOT NULL, path TEXT, length INTEGER NOT NULL, modified INTEGER,
   generation TEXT, messages INTEGER NOT NULL, indexed_at INTEGER NOT NULL, resume TEXT);
+CREATE TABLE IF NOT EXISTS corpus_built(at INTEGER NOT NULL);
 ";
 
 fn sql(error:rusqlite::Error) -> String {
@@ -55,10 +63,21 @@ fn sql(error:rusqlite::Error) -> String {
         "storage_pressure: the search index has no space left".into()
     } else {format!("Search index operation failed: {error}")}
 }
+/// Return every free page to the file system. `incremental_vacuum` frees one page per step, so a
+/// single `execute_batch` would release just one page and leave the file growing.
+pub(crate) fn reclaim_free_pages(conn:&Connection) -> rusqlite::Result<()> {
+    let mut statement=conn.prepare("PRAGMA incremental_vacuum")?;let mut rows=statement.query([])?;
+    while rows.next()?.is_some() {}
+    Ok(())
+}
 fn check(cancel:&AtomicBool) -> Result<(),String> {if cancel.load(Ordering::Relaxed) {Err("read_canceled".into())} else {Ok(())}}
 fn now() -> i64 {std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d|d.as_secs() as i64).unwrap_or(0)}
 
-pub(crate) fn path(data_dir:&Path) -> PathBuf {data_dir.join("search-index").join("corpus.sqlite")}
+pub(crate) fn path(data_dir:&Path) -> PathBuf {file(data_dir,VERSION)}
+/// Version 2 kept the unversioned name it was released under; other versions carry theirs.
+fn file(data_dir:&Path,version:i64) -> PathBuf {
+    data_dir.join("search-index").join(if version==2 {"corpus.sqlite".into()} else {format!("corpus-v{version}.sqlite")})
+}
 
 /// `file:` URI for attaching the business database read-only.
 fn read_only_uri(path:&str) -> String {
@@ -81,12 +100,61 @@ pub(super) fn open(app:&AppCtx) -> Result<Connection,String> {
             DROP TABLE IF EXISTS corpus_meta;").map_err(sql)?;
         conn.execute_batch(SCHEMA).map_err(sql)?;
         conn.execute("INSERT INTO corpus_meta VALUES(?1)",[VERSION]).map_err(sql)?;
-        history::store::reclaim_free_pages(&conn).map_err(sql)?;
+        reclaim_free_pages(&conn).map_err(sql)?;
     }
+    // Files from before the completion marker gain it here.
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS corpus_built(at INTEGER NOT NULL);").map_err(sql)?;
     let main=app.db().conn.lock().unwrap().path().map(str::to_owned).filter(|path|!path.is_empty())
         .ok_or("Search requires a file-backed application database")?;
     conn.execute("ATTACH DATABASE ?1 AS app",[read_only_uri(&main)]).map_err(sql)?;
     Ok(conn)
+}
+
+/// Index files of earlier versions, newest first.
+fn earlier(data_dir:&Path) -> Vec<(i64,PathBuf)> {
+    let current=path(data_dir);
+    let Ok(entries)=std::fs::read_dir(data_dir.join("search-index")) else {return Vec::new();};
+    let mut found:Vec<(i64,PathBuf)>=entries.flatten().map(|entry|entry.path())
+        .filter(|candidate|*candidate!=current && candidate.file_name().and_then(|name|name.to_str())
+            .is_some_and(|name|name=="corpus.sqlite" || name.starts_with("corpus-v") && name.ends_with(".sqlite")))
+        .filter_map(|candidate| {
+            let conn=Connection::open_with_flags(&candidate,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+            let version:i64=conn.query_row("SELECT version FROM corpus_meta",[],|r|r.get(0)).ok()?;
+            (version<VERSION).then_some((version,candidate))
+        }).collect();
+    found.sort_by(|a,b|b.0.cmp(&a.0));found
+}
+
+/// Whether this version's file has completed a background pass.
+fn built(conn:&Connection) -> Result<bool,String> {conn.query_row("SELECT EXISTS(SELECT 1 FROM main.corpus_built)",[],|r|r.get(0)).map_err(sql)}
+
+/// While this version's file is still being built, attach the newest earlier file it can read as `old`,
+/// so sessions not indexed here yet are still found. A file that cannot be attached is simply not used.
+pub(super) fn attach_earlier(app:&AppCtx,conn:&Connection) -> Result<(),String> {
+    if built(conn)? || previous_attached(conn)? {return Ok(());}
+    if let Some((_,earlier))=earlier(&app.data_dir()?).into_iter().find(|(version,_)|*version>=QUERYABLE_SINCE) {
+        let _=conn.execute("ATTACH DATABASE ?1 AS old",[read_only_uri(&earlier.to_string_lossy())]);
+    }
+    Ok(())
+}
+fn previous_attached(conn:&Connection) -> Result<bool,String> {
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_database_list WHERE name='old')",[],|r|r.get(0)).map_err(sql)
+}
+
+/// Record that this version's file holds every session, then remove the earlier files.
+pub(super) fn mark_built(app:&AppCtx,conn:&Connection) -> Result<(),String> {
+    if !built(conn)? {conn.execute("INSERT INTO corpus_built VALUES(?1)",[now()]).map_err(sql)?;}
+    remove_earlier(app);Ok(())
+}
+/// Remove earlier versions' files once this one is built. A file still open elsewhere (Windows) stays
+/// until a later start.
+pub(super) fn remove_earlier(app:&AppCtx) {
+    let Ok(data_dir)=app.data_dir() else {return;};
+    let Ok(conn)=Connection::open_with_flags(path(&data_dir),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else {return;};
+    if !built(&conn).unwrap_or(false) {return;}
+    for (_,earlier) in earlier(&data_dir) {
+        for suffix in ["-wal","-shm",""] {let mut name=earlier.clone().into_os_string();name.push(suffix);let _=std::fs::remove_file(name);}
+    }
 }
 
 #[derive(Clone)]
@@ -100,18 +168,6 @@ pub(super) fn sessions(app:&AppCtx,after:Option<&str>) -> Result<Vec<Session>,St
         FROM sessions WHERE (?1 IS NULL OR id>?1) ORDER BY id LIMIT 64").map_err(sql)?;
     let rows=statement.query_map([after],|r|Ok((Session {id:r.get(0)?,name:r.get(1)?,kind:SessionKind::from_db(&r.get::<_,String>(2)?),native:r.get(3)?,archived:r.get(4)?},r.get::<_,Option<bool>>(5)?.unwrap_or(false)))).map_err(sql)?;
     rows.map(|row|row.map_err(sql).and_then(|(session,large)|if large {Err("unsupported_record: session metadata exceeds its byte budget".into())} else {Ok(session)})).collect()
-}
-
-/// The indexed branch of a session's native recording, or None when it has none to read.
-fn native(app:&AppCtx,session:&Session,path:&Path,cancel:&AtomicBool) -> Result<Option<Branch>,String> {
-    let Some(id)=session.native.as_deref().map(str::trim).filter(|id|!id.is_empty()) else {return Ok(None);};
-    if session.kind==SessionKind::Kiro {
-        return match history::event_stream::complete(app,&session.id,cancel) {Ok(branch)=>Ok(Some(branch)),Err(error) if error.starts_with("source_missing:")=>Ok(None),Err(error)=>Err(error)};
-    }
-    let store=Store::at(&app.data_dir()?)?;
-    let source=store.register(session.kind,history::source::Segment {path:path.into(),native_id:id.into(),end_byte:None,end_ordinal:None})?;
-    let branch=history::api::bind(store,vec![source],session.kind,id.into(),None,&format!("global-search:{}",session.id))?;
-    history::event_stream::wait(branch,cancel).map(Some)
 }
 
 #[derive(Clone,PartialEq)]
@@ -135,16 +191,10 @@ fn track(app:&AppCtx,session:&Session,previous:Option<&State>) -> Result<Track,S
         // The recorded path costs one stat; the per-kind lookup walks the agent's whole session tree.
         let remembered=previous.filter(|state|state.source=="transcript" || state.source=="failed").and_then(|state|state.path.clone()).map(PathBuf::from).filter(|path|path.is_file());
         if let Some(path)=remembered.or_else(||transcript::source_path(session.kind,id).filter(|path|path.is_file())) {return Ok(Track::Transcript(path));}
-        // A file already authorized for this session stays searchable after the provider's directory
-        // catalogue changes. Only the recorded association and native identity are reused; protocol-only
-        // sources are not this track.
-        if matches!(session.kind,SessionKind::Claude|SessionKind::Codex|SessionKind::Grok|SessionKind::Pi|SessionKind::Omp|SessionKind::Antigravity) {
-            let store=Store::at(&app.data_dir()?)?;
-            let known:Option<String>=store.connect()?.query_row("SELECT s.path FROM sources s JOIN segments g ON g.source_id=s.id AND g.generation=s.generation
-                WHERE g.session_scope IN (?1,?2) AND s.provider=?3 AND s.native_id=?4 AND length(CAST(s.path AS BLOB))<=4096
-                AND NOT EXISTS(SELECT 1 FROM protocol_sources p WHERE p.source_id=s.id) ORDER BY g.sequence DESC LIMIT 1",
-                params![session.id,format!("global-search:{}",session.id),session.kind.as_str(),id],|r|r.get(0)).optional().map_err(sql)?;
-            if let Some(path)=known.map(PathBuf::from).filter(|path|path.is_file()) {return Ok(Track::Transcript(path));}
+        // A recording the conversation view opened in this process stays searchable after the provider's
+        // directory catalogue changes; only the path held in memory is reused.
+        if let Some(path)=crate::agent::history_store::store::known_path(&app.data_dir()?,session.kind,id).filter(|path|path.is_file()) {
+            return Ok(Track::Transcript(path));
         }
     }
     let recording=app.data_dir()?.join("recordings").join(format!("{}.log",session.id));
@@ -156,12 +206,15 @@ fn delete_rows(conn:&Connection,session:&str,from_message:Option<i64>) -> Result
         params![session,from_message]).map_err(sql)?;
     conn.execute("DELETE FROM session_fts WHERE session_id=?1 AND (?2 IS NULL OR message_index>=?2)",params![session,from_message]).map_err(sql)?;Ok(())
 }
-pub(super) fn insert(conn:&Connection,session:&str,source:&str,message:Option<i64>,ordinal:i64,role:Option<&str>,ts:Option<&str>,text:&str) -> Result<(),String> {
+/// One fragment. `offset` is where its message's first record begins in the transcript file, when the
+/// message was read from that file directly.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn insert(conn:&Connection,session:&str,source:&str,message:Option<i64>,ordinal:i64,role:Option<&str>,ts:Option<&str>,offset:Option<u64>,text:&str) -> Result<(),String> {
     if !text.chars().any(|ch|!ch.is_whitespace()) {return Ok(());}
-    conn.execute("INSERT INTO session_fts(text,session_id,source,message_index,ordinal,role,ts) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-        params![text,session,source,message,ordinal,role,ts]).map_err(sql)?;
-    conn.execute("INSERT INTO session_words(rowid,words,session_id) VALUES(?1,?2,?3)",
-        params![conn.last_insert_rowid(),tokenize::boundary_marked(text),session]).map_err(sql)?;Ok(())
+    conn.execute("INSERT INTO session_fts(text,session_id,source,message_index,ordinal,role,ts,record_offset) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+        params![text,session,source,message,ordinal,role,ts,offset]).map_err(sql)?;
+    conn.execute("INSERT INTO session_words(rowid,words) VALUES(?1,?2)",
+        params![conn.last_insert_rowid(),tokenize::boundary_marked(text)]).map_err(sql)?;Ok(())
 }
 
 /// Read `input` as UTF-8 text in blocks of at most [`CHUNK_BYTES`], ending a full block after its last
@@ -190,21 +243,6 @@ fn chunks(input:&mut impl Read,cancel:&AtomicBool,mut each:impl FnMut(&str)->Res
     }
 }
 
-/// Index the messages of `prose` from `start` on, replacing the session's rows from that message.
-fn index_prose(conn:&Connection,session:&str,prose:&Rc<Prose>,start:i64,cancel:&Arc<AtomicBool>) -> Result<(),String> {
-    delete_rows(conn,session,(start>0).then_some(start))?;
-    for number in start.max(0) as u64..prose.total {
-        check(cancel)?;
-        let metadata=prose.metadata(number)?.ok_or("source_changed: original message metadata is unavailable")?;
-        let (role,ts)=(metadata["role"].as_str(),metadata["timestamp"].as_str());
-        let mut reader=Reader::new(prose.clone(),number,cancel.clone())?;let mut part=0i64;
-        chunks(&mut reader,cancel,|text| {
-            insert(conn,session,"transcript",Some(number as i64),((number as i64)<<20)+part,role,ts,text)?;part+=1;Ok(())
-        })?;
-    }
-    Ok(())
-}
-
 /// Index every visible line of a terminal recording.
 fn index_recording(conn:&Connection,session:&str,path:&Path,cancel:&AtomicBool) -> Result<(),String> {
     delete_rows(conn,session,None)?;
@@ -214,7 +252,7 @@ fn index_recording(conn:&Connection,session:&str,path:&Path,cancel:&AtomicBool) 
         if failed.is_some() {return;}
         for piece in text.as_bytes().chunks(CHUNK_BYTES) {
             let piece=String::from_utf8_lossy(piece);
-            if let Err(error)=insert(conn,session,"recording",None,ordinal,None,None,piece.trim()) {failed=Some(error);return;}
+            if let Err(error)=insert(conn,session,"recording",None,ordinal,None,None,None,piece.trim()) {failed=Some(error);return;}
         }
         if text.chars().any(|ch|!ch.is_whitespace()) {ordinal+=1;}
     };
@@ -227,15 +265,99 @@ fn index_recording(conn:&Connection,session:&str,path:&Path,cancel:&AtomicBool) 
     failed.map_or(Ok(()),Err)
 }
 
-/// One refresher at a time per process: a search and the startup warm-up interleave session by session.
-fn gate() -> &'static Mutex<()> {static GATE:OnceLock<Mutex<()>>=OnceLock::new();GATE.get_or_init(||Mutex::new(()))}
+/// Refresh coordination for one index file: one refresher at a time, since every refresh writes it;
+/// how many searches are bringing sessions up to date; and whether a background pass walks them all.
+#[derive(Default)]
+struct Activity {gate:Mutex<()>,searching:AtomicUsize,background:AtomicBool}
+fn activity(app:&AppCtx) -> Result<Arc<Activity>,String> {
+    static ALL:OnceLock<Mutex<HashMap<PathBuf,Arc<Activity>>>>=OnceLock::new();
+    let file=path(&app.data_dir()?);
+    Ok(ALL.get_or_init(Default::default).lock().unwrap_or_else(|poisoned|poisoned.into_inner()).entry(file).or_default().clone())
+}
 
-/// What a refresh did; `Indexed` carries the source size that was read.
-pub(super) enum Refreshed {Unchanged,Indexed(u64),Removed}
+/// Held by a search for the length of its refresh pass. The background pass starts no new session
+/// while one is held, so a search waits at most for the session already being read.
+pub(super) struct Searching(Arc<Activity>);
+impl Searching {
+    pub(super) fn begin(app:&AppCtx) -> Result<Self,String> {let activity=activity(app)?;activity.searching.fetch_add(1,Ordering::SeqCst);Ok(Self(activity))}
+}
+impl Drop for Searching {fn drop(&mut self) {self.0.searching.fetch_sub(1,Ordering::SeqCst);}}
+
+/// Held by the background pass; None when another pass over the same index is already running.
+pub(super) struct Background(Arc<Activity>);
+impl Background {
+    pub(super) fn begin(app:&AppCtx) -> Option<Self> {
+        let activity=activity(app).ok()?;
+        activity.background.compare_exchange(false,true,Ordering::SeqCst,Ordering::SeqCst).ok().map(|_|Self(activity))
+    }
+    /// Wait while a search is refreshing, so a search never queues behind a whole pass.
+    pub(super) fn yield_to_searches(&self) {while self.0.searching.load(Ordering::SeqCst)>0 {std::thread::sleep(std::time::Duration::from_millis(20));}}
+}
+impl Drop for Background {fn drop(&mut self) {self.0.background.store(false,Ordering::SeqCst);}}
+
+/// What a refresh did; `Indexed` carries the source size that was read. `Deferred` sessions were left
+/// for the background pass and may be missing from, or behind in, the results.
+pub(super) enum Refreshed {Unchanged,Indexed(u64),Removed,Deferred}
 
 /// Bring one session's rows up to date with its source.
 pub(super) fn refresh_session(app:&AppCtx,conn:&Connection,session:&Session,cancel:&Arc<AtomicBool>) -> Result<Refreshed,String> {
-    let _gate=gate().lock().unwrap_or_else(|poisoned|poisoned.into_inner());
+    let activity=activity(app)?;let _gate=activity.gate.lock().unwrap_or_else(|poisoned|poisoned.into_inner());
+    refresh_locked(app,conn,session,cancel)
+}
+
+/// A search's refresh. An unchanged session costs its stat without waiting for another refresher. While
+/// a background pass runs, a session that was never indexed is left to it. Reading a changed session
+/// stops when `budget` trips, which the search sets when its time is up; such a session is deferred and
+/// the search answers from what is already indexed.
+pub(super) fn refresh_for_search(app:&AppCtx,conn:&Connection,session:&Session,cancel:&Arc<AtomicBool>,budget:&Arc<AtomicBool>) -> Result<Refreshed,String> {
+    check(cancel)?;
+    let activity=activity(app)?;
+    let previous=state(conn,&session.id)?;
+    let mut current=None;
+    if session.kind!=SessionKind::Kiro {
+        let track=track(app,session,previous.as_ref())?;
+        current=match &track {Track::Transcript(path)|Track::Recording(path)=>stat(path).map(|(length,modified)|(path.to_string_lossy().into_owned(),length,modified)),Track::None=>None};
+        let unchanged=match (&previous,current.clone()) {
+            (None,None)=>true,
+            (Some(state),Some((path,length,modified)))=>state.path.as_deref()==Some(path.as_str()) && state.length==length && state.modified==modified
+                && (state.source=="failed" || state.source==if matches!(track,Track::Recording(_)) {"recording"} else {"transcript"}),
+            _=>false,
+        };
+        if unchanged {return Ok(Refreshed::Unchanged);}
+    }
+    if previous.is_none() && activity.background.load(Ordering::SeqCst) {
+        // An earlier version's file that holds the session as it is now answers for it until the pass gets here.
+        let covered=match current {
+            Some((path,length,modified)) if previous_attached(conn)? => conn.query_row("SELECT EXISTS(SELECT 1 FROM old.corpus_state WHERE session_id=?1 AND source IN ('transcript','recording')
+                AND path=?2 AND length=?3 AND modified IS ?4)",params![session.id,path,length,modified],|r|r.get(0)).unwrap_or(false),
+            _=>false,
+        };
+        return Ok(if covered {Refreshed::Unchanged} else {Refreshed::Deferred});
+    }
+    let _gate=loop {
+        check(cancel)?;
+        match activity.gate.try_lock() {
+            Ok(guard)=>break guard,
+            Err(std::sync::TryLockError::Poisoned(poisoned))=>break poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock)=> {
+                if budget.load(Ordering::Relaxed) {return Ok(Refreshed::Deferred);}
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            },
+        }
+    };
+    match refresh_locked(app,conn,session,budget) {
+        Err(error) if error=="read_canceled" && !cancel.load(Ordering::Relaxed)=>Ok(Refreshed::Deferred),
+        result=>result,
+    }
+}
+
+/// Holds the indexer of `app`'s index, as a long refresh would.
+#[cfg(test)]
+pub(super) fn hold_indexer<T>(app:&AppCtx,during:impl FnOnce()->T) -> T {
+    let activity=activity(app).unwrap();let _gate=activity.gate.lock().unwrap();during()
+}
+
+fn refresh_locked(app:&AppCtx,conn:&Connection,session:&Session,cancel:&Arc<AtomicBool>) -> Result<Refreshed,String> {
     check(cancel)?;
     let previous=state(conn,&session.id)?;
     let track=track(app,session,previous.as_ref())?;
@@ -261,49 +383,68 @@ pub(super) fn refresh_session(app:&AppCtx,conn:&Connection,session:&Session,canc
     if !kiro && previous.as_ref().is_some_and(|state|state.source=="failed" && state.path==path_text && state.length==length && state.modified==modified) {
         return Ok(Refreshed::Unchanged);
     }
-    let result=index_transcript(app,conn,session,&path,previous.as_ref(),(path_text.clone(),length,modified),cancel);
+    let result=index_transcript(conn,session,&path,previous.as_ref(),(path_text.clone(),length,modified),cancel);
     if let Err(error)=&result {
         if ["index_incomplete:","unsupported_record:","detail_unavailable:"].iter().any(|code|error.starts_with(code)) {
-            write_state(conn,&session.id,&State {source:"failed".into(),path:path_text,length,modified,generation:None,messages:0,resume:None})?;
+            // The rows already indexed stay, and so does their resume point: a conversation read while
+            // its last record was still being written reads on from there once it changes, rather than
+            // from the first message.
+            let (generation,messages,resume)=previous.filter(|state|state.path==path_text)
+                .map_or((None,0,None),|state|(state.generation,state.messages,state.resume));
+            write_state(conn,&session.id,&State {source:"failed".into(),path:path_text,length,modified,generation,messages,resume})?;
         }
     }
     result
 }
 
-fn index_transcript(app:&AppCtx,conn:&Connection,session:&Session,path:&Path,previous:Option<&State>,(path_text,length,modified):(Option<String>,i64,Option<i64>),
+fn index_transcript(conn:&Connection,session:&Session,path:&Path,previous:Option<&State>,(path_text,length,modified):(Option<String>,i64,Option<i64>),
     cancel:&Arc<AtomicBool>) -> Result<Refreshed,String> {
-    let kiro=session.kind==SessionKind::Kiro;
-    let Some(branch)=native(app,session,path,cancel)? else {return Ok(Refreshed::Unchanged);};
-    let generation=branch.generation.clone();
-    if kiro && previous.is_some_and(|state|state.generation.as_deref()==Some(generation.as_str())) {return Ok(Refreshed::Unchanged);}
-    // A conversation that only grew is read again from where its last indexed message began; the
-    // last message may itself have grown. The resume point checks that nothing before it changed,
-    // which also holds after the history index re-read the recording under a new generation.
-    let grown=previous.filter(|state|state.source=="transcript" && state.path==path_text && length>=state.length);
-    let resume=grown.and_then(|state|state.resume.as_deref()).and_then(|raw|serde_json::from_str::<serde_json::Value>(raw).ok())
-        .and_then(|value|Some(Start {source:value["source"].as_str()?.into(),record:value["record"].as_u64()?,piece:value["piece"].as_u64()?,
-            number:value["number"].as_u64()?,identity:value["identity"].as_str()?.into(),before:value["before"].as_u64()?}))
-        .filter(|start|grown.is_some_and(|state|start.number as i64==state.messages-1));
-    let resumed=match &resume {Some(start)=>Prose::resume(branch.clone(),cancel,start)?,None=>None};
-    let (prose,start)=match (resumed,&resume) {
-        (Some(prose),Some(resume))=>(prose,resume.number as i64),
-        _=>{
-            let prose=Prose::new(branch,cancel)?;
-            // Without a resume point an unchanged generation still proves the earlier messages unchanged.
-            let start=match grown {
-                Some(state) if state.generation.as_deref()==Some(generation.as_str()) && prose.total as i64>=state.messages => state.messages.saturating_sub(1).max(0),
-                _=>0,
-            };
-            (prose,start)
-        },
-    };
-    let prose=Rc::new(prose);
-    let resume=match prose.total.checked_sub(1) {Some(last)=>prose.start(last)?,None=>None}
-        .map(|start|serde_json::json!({"source":start.source,"record":start.record,"piece":start.piece,"number":start.number,
-            "identity":start.identity,"before":start.before}).to_string());
+    if super::extract::supported(session.kind) {return index_file(conn,session,path,previous,(path_text,length,modified),cancel);}
+    let Some(id)=session.native.as_deref().map(str::trim).filter(|id|!id.is_empty()) else {return Ok(Refreshed::Unchanged);};
+    let Some((messages,revision))=super::extract::native_messages(session.kind,id,cancel)? else {return Ok(Refreshed::Unchanged);};
+    let state=State {source:"transcript".into(),path:path_text,length,modified,generation:Some(revision),messages:messages.len() as i64,resume:None};
     conn.execute_batch("BEGIN IMMEDIATE").map_err(sql)?;
-    let result=index_prose(conn,&session.id,&prose,start,cancel).and_then(|_|write_state(conn,&session.id,&State {
-        source:"transcript".into(),path:path_text,length,modified,generation:Some(generation),messages:prose.total as i64,resume}));
+    // The database changes with every conversation it holds; one whose messages are the same keeps its rows.
+    if previous.is_some_and(|previous|previous.source=="transcript" && previous.generation==state.generation) {
+        return finish(conn,write_state(conn,&session.id,&state)).map(|_|Refreshed::Unchanged);
+    }
+    let result=(|| {
+        delete_rows(conn,&session.id,None)?;
+        for message in &messages {
+            let mut part=0i64;let number=message.number as i64;
+            chunks(&mut message.text.as_bytes(),cancel,|text| {
+                insert(conn,&session.id,"transcript",Some(number),(number<<20)+part,Some(message.role),message.timestamp.as_deref(),None,text)?;part+=1;Ok(())
+            })?;
+        }
+        write_state(conn,&session.id,&state)
+    })();
+    finish(conn,result).map(|_|Refreshed::Indexed(length.max(0) as u64))
+}
+
+/// Index a transcript from its file. A conversation that only grew is read again from
+/// where its last message began, when nothing in front of that message changed.
+fn index_file(conn:&Connection,session:&Session,path:&Path,previous:Option<&State>,(path_text,length,modified):(Option<String>,i64,Option<i64>),
+    cancel:&Arc<AtomicBool>) -> Result<Refreshed,String> {
+    if session.native.as_deref().map(str::trim).is_none_or(str::is_empty) {return Ok(Refreshed::Unchanged);}
+    let transcript=super::extract::Transcript::open(session.kind,path,cancel)?;
+    let grown=previous.filter(|state|(state.source=="transcript" || state.source=="failed") && state.path==path_text && length>=state.length);
+    let resume=grown.and_then(|state|state.resume.as_deref()).and_then(|raw|serde_json::from_str::<super::extract::Resume>(raw).ok())
+        .filter(|resume|grown.is_some_and(|state|resume.number as i64==state.messages-1));
+    let resume=match resume {Some(resume) if transcript.resumes(&resume)? => Some(resume),_=>None};
+    conn.execute_batch("BEGIN IMMEDIATE").map_err(sql)?;
+    let result=(|| {
+        delete_rows(conn,&session.id,resume.as_ref().map(|resume|resume.number as i64).filter(|number|*number>0))?;
+        let (total,last)=transcript.messages(resume.as_ref(),cancel,|message| {
+            let mut part=0i64;let number=message.number as i64;
+            chunks(&mut message.text.as_bytes(),cancel,|text| {
+                // A forked rollout's offsets span several files, so its hits are located by message number.
+                insert(conn,&session.id,"transcript",Some(number),(number<<20)+part,Some(message.role),message.timestamp.as_deref(),(!transcript.chained()).then_some(message.offset),text)?;
+                part+=1;Ok(())
+            })
+        })?;
+        let resume=last.map(|last|serde_json::to_string(&last)).transpose().map_err(|e|e.to_string())?;
+        write_state(conn,&session.id,&State {source:"transcript".into(),path:path_text.clone(),length,modified,generation:None,messages:total as i64,resume})
+    })();
     finish(conn,result).map(|_|Refreshed::Indexed(length as u64))
 }
 
@@ -313,7 +454,7 @@ fn write_state(conn:&Connection,session:&str,state:&State) -> Result<(),String> 
 }
 fn finish(conn:&Connection,result:Result<(),String>) -> Result<(),String> {
     match result {
-        Ok(())=>{conn.execute_batch("COMMIT").map_err(sql)?;history::store::reclaim_free_pages(conn).map_err(sql)},
+        Ok(())=>{conn.execute_batch("COMMIT").map_err(sql)?;reclaim_free_pages(conn).map_err(sql)},
         Err(error)=>{let _=conn.execute_batch("ROLLBACK");Err(error)},
     }
 }
@@ -321,11 +462,11 @@ fn finish(conn:&Connection,result:Result<(),String>) -> Result<(),String> {
 /// Remove rows of sessions that no longer exist in the business database.
 pub(super) fn prune(conn:&Connection) -> Result<(),String> {
     conn.execute_batch("BEGIN IMMEDIATE;
-        DELETE FROM session_words WHERE session_id NOT IN (SELECT id FROM app.sessions);
+        DELETE FROM session_words WHERE rowid IN (SELECT rowid FROM session_fts WHERE session_id NOT IN (SELECT id FROM app.sessions));
         DELETE FROM session_fts WHERE session_id NOT IN (SELECT id FROM app.sessions);
         DELETE FROM corpus_state WHERE session_id NOT IN (SELECT id FROM app.sessions);
         COMMIT;").map_err(sql)?;
-    history::store::reclaim_free_pages(conn).map_err(sql)
+    reclaim_free_pages(conn).map_err(sql)
 }
 
 /// Delete removed sessions' rows right away rather than at the next prune.
@@ -341,7 +482,7 @@ pub fn drop_sessions(app:&AppCtx,ids:&[String]) -> Result<(),String> {
 /// Merge fragmented FTS segments after many updates so the file stays compact.
 pub(super) fn optimize(conn:&Connection) -> Result<(),String> {
     conn.execute_batch("INSERT INTO session_fts(session_fts) VALUES('optimize'); INSERT INTO session_words(session_words) VALUES('optimize');").map_err(sql)?;
-    history::store::reclaim_free_pages(conn).map_err(sql)
+    reclaim_free_pages(conn).map_err(sql)
 }
 
 // ─────────────────────────── Query ───────────────────────────
@@ -369,35 +510,52 @@ fn like_escape(k:&str) -> String {
     for c in k.chars() {if c=='\\' || c=='%' || c=='_' {out.push('\\');}out.push(c);}out
 }
 
+/// The fragment tables a query reads, each with the condition that limits it: this version's, and
+/// while it is being built an earlier file's, for the sessions this one has not indexed yet.
+fn arms(conn:&Connection) -> Result<Vec<(&'static str,&'static str)>,String> {
+    let mut arms=vec![("main","")];
+    if previous_attached(conn)? {arms.push(("old"," AND f.session_id NOT IN (SELECT session_id FROM main.corpus_state)"));}
+    Ok(arms)
+}
+/// The file holding a session's rows.
+fn holder(conn:&Connection,session:&str) -> Result<&'static str,String> {
+    if !previous_attached(conn)? {return Ok("main");}
+    let here:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM main.corpus_state WHERE session_id=?1)",[session],|r|r.get(0)).map_err(sql)?;
+    Ok(if here {"main"} else {"old"})
+}
+
 /// Matching sessions in relevance order. The word index answers first; the trigram index or, for
 /// terms shorter than three characters, LIKE answers only when no word matched.
 pub(super) fn rank(conn:&Connection,query:&str,scope:SearchScope,session:Option<&str>) -> Result<(Option<Query>,Vec<Ranked>),String> {
     let keys:Vec<String>=query.split_whitespace().map(str::to_string).collect();
     if keys.is_empty() {return Ok((None,Vec::new()));}
-    let filter=format!("{}{}",scope_filter(scope),if session.is_some() {" AND f.session_id=?2"} else {""});
+    let arms=arms(conn)?;
     let run=|sql:String,binds:Vec<String>| -> Result<Vec<Ranked>,String> {
         let mut statement=conn.prepare(&sql).map_err(sql_error)?;
         let rows=statement.query_map(params_from_iter(binds.iter()),|r|Ok(Ranked {session:r.get(0)?,count:r.get(1)?,source:r.get(2)?})).map_err(sql_error)?;
         rows.collect::<Result<Vec<_>,_>>().map_err(sql_error)
     };
+    // Each arm selects session, source and rank; the sessions table applies the scope once.
+    let union=|arm:&dyn Fn(&str,&str)->String,order:&str| format!("SELECT x.session_id,count(*),min(x.source) FROM ({}) x JOIN app.sessions s ON s.id=x.session_id
+        WHERE 1=1{} GROUP BY x.session_id ORDER BY {order},x.session_id",arms.iter().map(|(db,limit)|arm(db,limit)).collect::<Vec<_>>().join(" UNION ALL "),scope_filter(scope));
+    let one=if session.is_some() {" AND f.session_id=?2"} else {""};
     let with_session=|first:String| -> Vec<String> {let mut binds=vec![first];if let Some(id)=session {binds.push(id.into());}binds};
     if let Some(phrases)=keys.iter().map(|k|tokenize::query_phrase(k)).collect::<Option<Vec<_>>>() {
         let expression=phrases.join(" ");
-        let ranked=run(format!("SELECT f.session_id,count(*),min(f.source) FROM session_words w JOIN session_fts f ON f.rowid=w.rowid
-            JOIN app.sessions s ON s.id=f.session_id WHERE session_words MATCH ?1{filter} GROUP BY f.session_id ORDER BY min(w.rank),f.session_id"),with_session(expression.clone()))?;
+        let ranked=run(union(&|db,limit|format!("SELECT f.session_id,f.source,w.rank AS r FROM {db}.session_words w JOIN {db}.session_fts f ON f.rowid=w.rowid
+            WHERE session_words MATCH ?1{limit}{one}"),"min(x.r)"),with_session(expression.clone()))?;
         if !ranked.is_empty() {return Ok((Some(Query {keys,answered:Answered::Words,expression}),ranked));}
     }
     if keys.iter().all(|k|k.chars().count()>=MIN_FTS_TERM_CHARS) {
         let expression=fts_match_expr(&keys);
-        let ranked=run(format!("SELECT f.session_id,count(*),min(f.source) FROM session_fts f JOIN app.sessions s ON s.id=f.session_id
-            WHERE session_fts MATCH ?1{filter} GROUP BY f.session_id ORDER BY min(f.rank),f.session_id"),with_session(expression.clone()))?;
+        let ranked=run(union(&|db,limit|format!("SELECT f.session_id,f.source,f.rank AS r FROM {db}.session_fts f WHERE session_fts MATCH ?1{limit}{one}"),"min(x.r)"),
+            with_session(expression.clone()))?;
         return Ok((Some(Query {keys,answered:Answered::Trigram,expression}),ranked));
     }
     let clause=keys.iter().enumerate().map(|(index,_)|format!("f.text LIKE ?{} ESCAPE '\\'",index+2)).collect::<Vec<_>>().join(" AND ");
-    let like_filter=format!("{}{}",scope_filter(scope),if session.is_some() {" AND f.session_id=?1"} else {""});
+    let one=if session.is_some() {" AND f.session_id=?1"} else {""};
     let mut binds=vec![session.unwrap_or_default().to_owned()];binds.extend(keys.iter().map(|k|format!("%{}%",like_escape(k))));
-    let mut ranked=run(format!("SELECT f.session_id,count(*),min(f.source) FROM session_fts f JOIN app.sessions s ON s.id=f.session_id
-        WHERE {clause}{like_filter} GROUP BY f.session_id ORDER BY count(*) DESC,f.session_id"),binds)?;
+    let mut ranked=run(union(&|db,limit|format!("SELECT f.session_id,f.source,0 AS r FROM {db}.session_fts f WHERE {clause}{limit}{one}"),"count(*) DESC"),binds)?;
     ranked.sort_by(|a,b|b.count.cmp(&a.count));
     Ok((Some(Query {keys,answered:Answered::Like,expression:String::new()}),ranked))
 }
@@ -405,16 +563,20 @@ fn sql_error(error:rusqlite::Error) -> String {sql(error)}
 
 /// Up to [`MAX_MATCHES`] snippets for one ranked session, in document order.
 pub(super) fn matches(conn:&Connection,query:&Query,session:&str) -> Result<Vec<SearchMatch>,String> {
-    struct Raw {message:Option<i64>,text:String,spans:Vec<(usize,usize)>,role:Option<String>,ts:Option<String>,transcript:bool}
-    let limit=MAX_MATCHES as i64;
+    struct Raw {message:Option<i64>,text:String,spans:Vec<(usize,usize)>,role:Option<String>,ts:Option<String>,transcript:bool,offset:Option<u64>}
+    let limit=MAX_MATCHES as i64;let db=holder(conn,session)?;
+    // Files before version 3 hold no record offsets.
+    let offset=if db=="old" {"NULL"} else {"f.record_offset"};
     let raws:Vec<Raw>=match query.answered {
         Answered::Words=> {
-            let mut statement=conn.prepare("SELECT f.message_index,highlight(session_words,0,?2,?3),f.role,f.ts,f.source FROM session_words w JOIN session_fts f ON f.rowid=w.rowid
-                WHERE session_words MATCH ?1 AND f.session_id=?4 ORDER BY f.ordinal LIMIT ?5").map_err(sql)?;
-            let rows=statement.query_map(params![query.expression,tokenize::MARK_OPEN,tokenize::MARK_CLOSE,session,limit],|r| {
-                let marked:String=r.get(1)?;let highlighted=tokenize::parse_highlight(&marked);
-                Ok(Raw {message:r.get(0)?,text:highlighted.text,spans:highlighted.spans,role:r.get(2)?,ts:r.get(3)?,transcript:r.get::<_,String>(4)?=="transcript"})
-            }).map_err(sql)?;rows.collect::<Result<_,_>>().map_err(sql)?
+            let mut statement=conn.prepare(&format!("SELECT f.message_index,f.text,f.role,f.ts,f.source,{offset} FROM {db}.session_words w JOIN {db}.session_fts f ON f.rowid=w.rowid
+                WHERE session_words MATCH ?1 AND f.session_id=?2 ORDER BY f.ordinal LIMIT ?3")).map_err(sql)?;
+            let rows=statement.query_map(params![query.expression,session,limit],|r| {
+                Ok(Raw {message:r.get(0)?,text:r.get(1)?,spans:Vec::new(),role:r.get(2)?,ts:r.get(3)?,transcript:r.get::<_,String>(4)?=="transcript",offset:r.get(5)?})
+            }).map_err(sql)?;
+            let mut raws=rows.collect::<Result<Vec<_>,_>>().map_err(sql)?;
+            highlight_words(conn,&query.expression,&mut raws.iter_mut().map(|raw|(&raw.text,&mut raw.spans)).collect::<Vec<_>>())?;
+            raws
         },
         Answered::Trigram|Answered::Like=> {
             let (condition,binds)=if query.answered==Answered::Trigram {("session_fts MATCH ?1".to_owned(),vec![query.expression.clone()])} else {
@@ -422,12 +584,12 @@ pub(super) fn matches(conn:&Connection,query:&Query,session:&str) -> Result<Vec<
                     query.keys.iter().map(|k|format!("%{}%",like_escape(k))).collect())
             };
             let at=binds.len();
-            let mut statement=conn.prepare(&format!("SELECT f.message_index,f.text,f.role,f.ts,f.source FROM session_fts f WHERE {condition}
+            let mut statement=conn.prepare(&format!("SELECT f.message_index,f.text,f.role,f.ts,f.source,{offset} FROM {db}.session_fts f WHERE {condition}
                 AND f.session_id=?{} ORDER BY f.ordinal LIMIT ?{}",at+1,at+2)).map_err(sql)?;
             let mut values:Vec<rusqlite::types::Value>=binds.into_iter().map(rusqlite::types::Value::Text).collect();
             values.push(rusqlite::types::Value::Text(session.into()));values.push(rusqlite::types::Value::Integer(limit));
             let rows=statement.query_map(params_from_iter(values.iter()),|r|Ok(Raw {message:r.get(0)?,text:r.get(1)?,spans:Vec::new(),role:r.get(2)?,ts:r.get(3)?,
-                transcript:r.get::<_,String>(4)?=="transcript"})).map_err(sql)?;rows.collect::<Result<_,_>>().map_err(sql)?
+                transcript:r.get::<_,String>(4)?=="transcript",offset:r.get(5)?})).map_err(sql)?;rows.collect::<Result<_,_>>().map_err(sql)?
         },
     };
     Ok(raws.into_iter().enumerate().map(|(index,raw)| {
@@ -435,8 +597,30 @@ pub(super) fn matches(conn:&Connection,query:&Query,session:&str) -> Result<Vec<
             let snippet=match (raw.transcript,raw.spans.first()) {(true,Some(&(at,end)))=>snippet_around(&raw.text,at,end-at),_=>clip_line(&raw.text)};
             (snippet,matched_literals(&raw.text,&raw.spans))
         } else {(if raw.transcript {snippet_for(&raw.text,&query.keys)} else {clip_line(&raw.text)},query.keys.clone())};
-        SearchMatch {message_index:raw.message.map(|v|v as u32),ordinal:(index+1) as u32,snippet,matched,role:raw.role,timestamp:raw.ts,row_id:None}
+        SearchMatch {message_index:raw.message.map(|v|v as u32),ordinal:(index+1) as u32,snippet,matched,role:raw.role,timestamp:raw.ts,row_id:None,record_offset:raw.offset}
     }).collect())
+}
+
+/// Where each text matches a word query. The word index keeps no copy of the text it indexes, so the
+/// few fragments of one result page are indexed again in a temporary table of the same tokenizer,
+/// whose `highlight` marks exactly the words the stored index matched.
+fn highlight_words(conn:&Connection,expression:&str,texts:&mut [(&String,&mut Vec<(usize,usize)>)]) -> Result<(),String> {
+    conn.execute_batch("CREATE VIRTUAL TABLE IF NOT EXISTS temp.highlight_words USING fts5(words, tokenize = 'porter unicode61 remove_diacritics 1');
+        DELETE FROM temp.highlight_words;").map_err(sql)?;
+    for (index,(text,_)) in texts.iter().enumerate() {
+        conn.execute("INSERT INTO temp.highlight_words(rowid,words) VALUES(?1,?2)",params![index as i64+1,tokenize::boundary_marked(text)]).map_err(sql)?;
+    }
+    let mut statement=conn.prepare("SELECT rowid,highlight(highlight_words,0,?2,?3) FROM temp.highlight_words WHERE highlight_words MATCH ?1").map_err(sql)?;
+    let rows=statement.query_map(params![expression,tokenize::MARK_OPEN,tokenize::MARK_CLOSE],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).map_err(sql)?;
+    for row in rows {
+        let (rowid,marked)=row.map_err(sql)?;
+        if let Some((text,spans))=texts.get_mut((rowid-1) as usize) {
+            let highlighted=tokenize::parse_highlight(&marked);
+            // The marked text is the fragment again; its spans index the fragment's own bytes.
+            if highlighted.text==**text {**spans=highlighted.spans;}
+        }
+    }
+    conn.execute_batch("DELETE FROM temp.highlight_words;").map_err(sql)?;Ok(())
 }
 
 /// The complete hit for one ranked session, with names read from the business database.
@@ -513,7 +697,7 @@ mod tests {
         let (fragments,messages)=rows(&conn);assert_eq!(messages,4);assert!(fragments>=5,"{fragments}");
         // Removing the session from the business database prunes its rows.
         app.db().conn.lock().unwrap().execute("DELETE FROM sessions WHERE id='s'",[]).unwrap();prune(&conn).unwrap();assert_eq!(rows(&conn),(0,0));
-        drop(conn);crate::agent::history_store::store::release_test_directory(&root);drop(app);let _=std::fs::remove_dir_all(&root);
+        drop(conn);drop(app);let _=std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -541,8 +725,8 @@ mod tests {
             refresh_session(&app,&conn,&session,&cancel).unwrap();
             let resume:Option<String>=conn.query_row("SELECT resume FROM corpus_state WHERE session_id='s'",[],|r|r.get(0)).unwrap();assert!(resume.is_some());
         }
-        // The history index is rebuilt from nothing (as after eviction): the next append still resumes.
-        crate::agent::history_store::store::release_test_directory(&root);std::fs::remove_dir_all(root.join("chat-index")).unwrap();
+        // The transcript is read from its file: searching it never builds its history index.
+        assert!(!root.join("chat-index").exists());
         std::fs::OpenOptions::new().append(true).open(&rollout).unwrap().write_all(message("a4","assistant","after the rebuild").as_bytes()).unwrap();
         let later=std::time::SystemTime::now()+std::time::Duration::from_secs(20);std::fs::File::options().write(true).open(&rollout).unwrap().set_modified(later).unwrap();
         refresh_session(&app,&conn,&session,&cancel).unwrap();
@@ -552,7 +736,7 @@ mod tests {
         conn.execute("DELETE FROM corpus_state WHERE session_id='s'",[]).unwrap();delete_rows(&conn,"s",None).unwrap();
         conn.execute("INSERT INTO corpus_state VALUES('s','transcript',?1,0,NULL,NULL,0,0,NULL)",[rollout.to_string_lossy()]).unwrap();
         refresh_session(&app,&conn,&session,&cancel).unwrap();assert_eq!(rows(&conn),incremental);
-        drop(conn);crate::agent::history_store::store::release_test_directory(&root);drop(app);let _=std::fs::remove_dir_all(&root);
+        drop(conn);drop(app);let _=std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -576,7 +760,47 @@ mod tests {
         std::fs::write(&transcript,serde_json::json!({"type":"user","uuid":"a","message":{"role":"user","content":"Root question"}}).to_string()+"\n").unwrap();
         let later=std::time::SystemTime::now()+std::time::Duration::from_secs(2);std::fs::File::options().write(true).open(&transcript).unwrap().set_modified(later).unwrap();
         assert!(matches!(refresh_session(&app,&conn,&session,&cancel).unwrap(),Refreshed::Indexed(_)));assert_eq!(source(&conn),"transcript");
-        drop(conn);crate::agent::history_store::store::release_test_directory(&root);drop(app);let _=std::fs::remove_dir_all(&root);
+        drop(conn);drop(app);let _=std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_conversation_caught_mid_write_reads_on_from_its_resume_point_afterwards() {
+        let root=std::env::temp_dir().join(format!("vlx-search-midwrite-{}",uuid::Uuid::new_v4()));std::fs::create_dir_all(&root).unwrap();
+        let db=crate::db::Db::open(&root.join("business.sqlite")).unwrap();
+        db.conn.lock().unwrap().execute_batch("INSERT INTO projects(id,name,root_path,sort_order,created_at) VALUES('p','p','/p',0,0);
+            INSERT INTO sessions(id,project_id,name,kind,sort_order,created_at,agent_session_id) VALUES('s','p','codex','codex',0,0,'thread');").unwrap();
+        let app=AppCtx::Headless(Arc::new(crate::host::HeadlessHost::new(root.clone(),db)));
+        let rollout=root.join("rollout-thread.jsonl");
+        std::fs::write(&rollout,message("u1","user","First question")+&message("a1","assistant","First answer")).unwrap();
+        let conn=open(&app).unwrap();
+        conn.execute("INSERT INTO corpus_state VALUES('s','transcript',?1,0,NULL,NULL,0,0,NULL)",[rollout.to_string_lossy()]).unwrap();
+        let session=sessions(&app,None).unwrap().remove(0);let cancel=Arc::new(AtomicBool::new(false));
+        let touch=|seconds:u64| {let later=std::time::SystemTime::now()+std::time::Duration::from_secs(seconds);std::fs::File::options().write(true).open(&rollout).unwrap().set_modified(later).unwrap();};
+        refresh_session(&app,&conn,&session,&cancel).unwrap();
+        let state=|conn:&Connection| conn.query_row("SELECT source,resume IS NOT NULL FROM corpus_state WHERE session_id='s'",[],|r|Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?))).unwrap();
+        assert_eq!(state(&conn),("transcript".into(),true));
+        // The next record is only half written when the search reads it.
+        let next=message("u2","user","Second question");let (head,tail)=next.split_at(next.len()/2);
+        std::fs::OpenOptions::new().append(true).open(&rollout).unwrap().write_all(head.as_bytes()).unwrap();touch(2);
+        // The unfinished line is left for the next read; the complete messages stay indexed.
+        assert!(matches!(refresh_session(&app,&conn,&session,&cancel).unwrap(),Refreshed::Indexed(_)));
+        assert_eq!(state(&conn),("transcript".into(),true));
+        let rows=|conn:&Connection| {
+            let mut statement=conn.prepare("SELECT message_index,group_concat(text,'|') FROM (SELECT message_index,text FROM session_fts WHERE session_id='s' ORDER BY ordinal) GROUP BY message_index ORDER BY message_index").unwrap();
+            statement.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap()
+        };
+        assert_eq!(rows(&conn).len(),2,"the rows indexed before stay searchable");
+        let first=|conn:&Connection| conn.query_row("SELECT rowid FROM session_fts WHERE session_id='s' AND message_index=0",[],|r|r.get::<_,i64>(0)).unwrap();
+        let before=first(&conn);
+        // Once the record is complete the session reads on and matches a rebuild from nothing.
+        std::fs::OpenOptions::new().append(true).open(&rollout).unwrap().write_all(tail.as_bytes()).unwrap();touch(4);
+        assert!(matches!(refresh_session(&app,&conn,&session,&cancel).unwrap(),Refreshed::Indexed(_)));
+        let incremental=rows(&conn);assert_eq!(incremental.len(),3,"{incremental:?}");assert_eq!(state(&conn).0,"transcript");
+        assert_eq!(first(&conn),before,"messages before the resume point are not read again");
+        conn.execute("DELETE FROM corpus_state WHERE session_id='s'",[]).unwrap();delete_rows(&conn,"s",None).unwrap();
+        conn.execute("INSERT INTO corpus_state VALUES('s','transcript',?1,0,NULL,NULL,0,0,NULL)",[rollout.to_string_lossy()]).unwrap();
+        refresh_session(&app,&conn,&session,&cancel).unwrap();assert_eq!(rows(&conn),incremental);
+        drop(conn);drop(app);let _=std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -586,23 +810,40 @@ mod tests {
         assert_eq!(joined,text);assert!(blocks>=3);
     }
 
-    /// Times a cold warm-up phase by phase on a copied data directory: VLX_BENCH_DATA=<dir>, optionally
-    /// starting after VLX_BENCH_AFTER=<session id> for at most VLX_BENCH_LIMIT=<n> sessions.
+    /// Times a cold warm-up as the background pass runs it on a copied data directory, VLX_BENCH_DATA=<dir>,
+    /// per provider, and reports whether the history index grew meanwhile.
     #[test]
     #[ignore]
-    fn bench_cold_refresh_of_a_real_data_directory() {
+    fn bench_cold_warmup_of_a_real_data_directory() {
         let Ok(dir)=std::env::var("VLX_BENCH_DATA") else {return;};let root=PathBuf::from(dir);
         let app=AppCtx::Headless(Arc::new(crate::host::HeadlessHost::new(root.clone(),crate::db::Db::open(&root.join("vlx-term.db")).unwrap())));
         let conn=open(&app).unwrap();let cancel=Arc::new(AtomicBool::new(false));
-        // Writes a few pages and reports a reader left open by the finished session.
-        let probe=|stage:&str,session:&str| {
-            let Ok(index)=Connection::open(root.join("chat-index/index.sqlite")) else {return;};
-            let _=index.execute_batch("CREATE TABLE IF NOT EXISTS bench_probe(v BLOB); INSERT INTO bench_probe VALUES(zeroblob(40000)); DELETE FROM bench_probe;");
-            let (frames,copied):(i64,i64)=index.query_row("PRAGMA wal_checkpoint(PASSIVE)",[],|r|Ok((r.get(1)?,r.get(2)?))).unwrap_or((-1,-1));
-            if frames!=copied {eprintln!("pinned after {stage} {session} {frames} {copied}");}
-        };
-        if std::env::var("VLX_BENCH_WARM").is_ok() {
-            // A warm index: time what one search's refresh pass costs, session by session.
+        let history=|| std::fs::metadata(root.join("chat-index/index.sqlite")).map(|meta|meta.len()).unwrap_or(0);
+        let before=history();let began=std::time::Instant::now();
+        let mut kinds:std::collections::BTreeMap<String,(u64,u64,u64,f64)>=Default::default();let mut after=None;
+        loop {
+            let batch=sessions(&app,after.as_deref()).unwrap();if batch.is_empty() {break;}after=batch.last().map(|s|s.id.clone());
+            for session in batch {
+                let t=std::time::Instant::now();let result=refresh_session(&app,&conn,&session,&cancel);let spent=t.elapsed().as_secs_f64();
+                let entry=kinds.entry(format!("{:?}",session.kind)).or_default();entry.3+=spent;
+                match result {Ok(Refreshed::Indexed(bytes))=>{entry.0+=1;entry.1+=bytes;},Ok(_)=>{},Err(error)=>{entry.2+=1;eprintln!("skip {:?} {} {error}",session.kind,session.id);}}
+                if spent>5.0 {eprintln!("slow {:?} {} {spent:.1}s",session.kind,session.id);}
+            }
+        }
+        for (kind,(count,bytes,failed,spent)) in &kinds {eprintln!("{kind:<12} {count:>5} indexed {:>9.1} MB {failed:>4} failed {spent:>7.1}s",*bytes as f64/1e6);}
+        let size=std::fs::metadata(path(&root)).map(|meta|meta.len()).unwrap_or(0);
+        eprintln!("total {:.0}s; search index {:.1} MB; history index {:.1} MB -> {:.1} MB",began.elapsed().as_secs_f64(),size as f64/1e6,before as f64/1e6,history() as f64/1e6);
+    }
+
+    /// Times one search's refresh pass over an already built index on a copied data directory,
+    /// VLX_BENCH_DATA=<dir>, session by session.
+    #[test]
+    #[ignore]
+    fn bench_warm_refresh_of_a_real_data_directory() {
+        let Ok(dir)=std::env::var("VLX_BENCH_DATA") else {return;};let root=PathBuf::from(dir);
+        let app=AppCtx::Headless(Arc::new(crate::host::HeadlessHost::new(root.clone(),crate::db::Db::open(&root.join("vlx-term.db")).unwrap())));
+        let conn=open(&app).unwrap();let cancel=Arc::new(AtomicBool::new(false));
+        {
             let began=std::time::Instant::now();let mut after=None;
             loop {
                 let batch=sessions(&app,after.as_deref()).unwrap();if batch.is_empty() {break;}after=batch.last().map(|s|s.id.clone());
@@ -615,28 +856,8 @@ mod tests {
                     }
                 }
             }
-            eprintln!("refresh pass {:.1}s",began.elapsed().as_secs_f64());return;
+            eprintln!("refresh pass {:.1}s",began.elapsed().as_secs_f64());
         }
-        let (mut scan,mut prose,mut write,mut bytes)=(0f64,0f64,0f64,0u64);let began=std::time::Instant::now();let mut after=std::env::var("VLX_BENCH_AFTER").ok();
-        let limit=std::env::var("VLX_BENCH_LIMIT").ok().and_then(|v|v.parse::<usize>().ok()).unwrap_or(usize::MAX);let mut seen=0;
-        loop {
-            let batch=sessions(&app,after.as_deref()).unwrap();if batch.is_empty() || seen>=limit {break;}after=batch.last().map(|s|s.id.clone());
-            for session in batch {
-                seen+=1;if seen>limit {break;}
-                let path=match track(&app,&session,None) {Ok(Track::Transcript(path))=>path,Ok(_)=>{eprintln!("untracked {}",session.id);continue;},Err(e)=>{eprintln!("skip {} {e}",session.id);continue;}};
-                if session.kind==SessionKind::Kiro {continue;}
-                let size=stat(&path).map(|s|s.0 as u64).unwrap_or(0);
-                let t=std::time::Instant::now();let branch=match native(&app,&session,&path,&cancel) {Ok(Some(branch))=>branch,other=>{eprintln!("skip {} {:?}",session.id,other.err());continue;}};
-                let a=t.elapsed().as_secs_f64();let t=std::time::Instant::now();
-                let p=match Prose::new(branch,&cancel) {Ok(p)=>Rc::new(p),Err(e)=>{eprintln!("skip {} {e}",session.id);continue;}};
-                let b=t.elapsed().as_secs_f64();let t=std::time::Instant::now();
-                conn.execute_batch("BEGIN IMMEDIATE").unwrap();let result=index_prose(&conn,&session.id,&p,0,&cancel);if let Err(e)=finish(&conn,result) {eprintln!("skip {:?} {} {:.1} MB {e}",session.kind,session.id,size as f64/1e6);continue;}
-                let c=t.elapsed().as_secs_f64();drop(p);probe("drop",&session.id);
-                scan+=a;prose+=b;write+=c;bytes+=size;
-                if a+b+c>1.0 {eprintln!("{} {:?} {:>7.1} MB scan {a:>6.1}s prose {b:>6.1}s write {c:>6.1}s",session.id,session.kind,size as f64/1e6);}
-            }
-        }
-        eprintln!("total {:.1} MB in {:.0}s: scan {scan:.0}s prose {prose:.0}s write {write:.0}s",bytes as f64/1e6,began.elapsed().as_secs_f64());
     }
 }
 

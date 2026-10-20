@@ -1058,7 +1058,7 @@ fn append_grok_text(
 
 /// OpenCode's messages as transcript pieces: one per user message, one per assistant message with the
 /// tools it called, read through the same converter the export uses.
-fn opencode_pieces(messages: &[crate::agent::opencode_store::OpencodeMessage]) -> Vec<Piece> {
+pub(crate) fn opencode_pieces(messages: &[crate::agent::opencode_store::OpencodeMessage]) -> Vec<Piece> {
     let mut pieces: Vec<Piece> = Vec::new();
     for event in crate::agent::chat::opencode_timeline::events(messages) {
         match event {

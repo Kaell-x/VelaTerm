@@ -40,12 +40,15 @@ pub fn db_path() -> Option<PathBuf> {
 }
 
 fn open() -> Result<Connection, String> {
-    let path = db_path().ok_or("OpenCode's data directory could not be located")?;
+    open_at(&db_path().ok_or("OpenCode's data directory could not be located")?)
+}
+
+fn open_at(path: &std::path::Path) -> Result<Connection, String> {
     if !path.exists() {
         return Err("OpenCode has not recorded any conversation on this machine".to_string());
     }
     let conn = Connection::open_with_flags(
-        &path,
+        path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|e| format!("Failed to open OpenCode's store: {e}"))?;
@@ -106,11 +109,17 @@ pub fn messages(session_id: &str) -> Result<Vec<OpencodeMessage>, String> {
     messages_bounded(session_id,&mut remaining)
 }
 
+/// Every message of a session in the database at `path`, without a byte budget: the history reader
+/// holds one conversation at a time and reads its bodies back piece by piece.
+pub(crate) fn messages_in(path:&std::path::Path,session_id:&str) -> Result<Vec<OpencodeMessage>,String> {
+    let conn=open_at(path)?;let mut unbounded=usize::MAX;
+    messages_from(&conn,session_id,&mut unbounded)
+}
+
 pub(crate) fn messages_bounded(session_id:&str,remaining:&mut usize) -> Result<Vec<OpencodeMessage>,String> {
+    // `open` pins one read snapshot before the preflight, so an append cannot grow a selected column
+    // between counting its original bytes and materializing a small compatibility response.
     let conn = open()?;
-    // Pin one read snapshot before the preflight so an append cannot grow a selected column between
-    // counting its original bytes and materializing a small compatibility response.
-    conn.execute_batch("BEGIN DEFERRED").map_err(|e|e.to_string())?;
     messages_from(&conn,session_id,remaining)
 }
 

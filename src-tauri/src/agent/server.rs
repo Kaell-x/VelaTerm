@@ -559,24 +559,16 @@ fn serve_with_app(
                     let stream_format=url.split_once('?').and_then(|(_,query)|query.split('&').find_map(|pair|match pair {
                         "stream=text"=>Some("text"),"stream=json"=>Some("json"),_=>None,
                     }));
-                    let stream_app=app.clone();
                     std::thread::spawn(move || {
-                        if let (Some(app),Some(format),ReadRequest::Refer(refer))=(&stream_app,stream_format,&req) {
+                        if let (Some(format),ReadRequest::Refer(refer))=(stream_format,&req) {
                             if !refer.list {
-                                if crate::agent::history_store::refer::supported(app,refer) {
-                                    match crate::agent::history_store::refer::response(app,refer,format) {
-                                        Ok(response)=>{let _=crate::agent::history_store::refer::respond(request,response);},
-                                        Err((code,message))=>{let _=request.respond(tiny_http::Response::from_string(message).with_status_code(code));},
-                                    }
-                                } else {
-                                    let (code,payload)=handler(req);
-                                    let payload=if format=="text" && code==200 {
-                                        serde_json::from_str::<serde_json::Value>(&payload).map(|value|if value.get("answer").is_some() {super::cli_client::render_answer(&value)} else {super::cli_client::render_refer(&value)}).unwrap_or(payload)
-                                    } else {payload};
-                                    let content_type=if format=="text" {"text/plain; charset=utf-8"} else {"application/json; charset=utf-8"};
-                                    let _=request.respond(tiny_http::Response::from_string(payload).with_status_code(code)
-                                        .with_header(tiny_http::Header::from_bytes("Content-Type",content_type).unwrap()));
-                                }
+                                let (code,payload)=handler(req);
+                                let payload=if format=="text" && code==200 {
+                                    serde_json::from_str::<serde_json::Value>(&payload).map(|value|if value.get("answer").is_some() {super::cli_client::render_answer(&value)} else {super::cli_client::render_refer(&value)}).unwrap_or(payload)
+                                } else {payload};
+                                let content_type=if format=="text" {"text/plain; charset=utf-8"} else {"application/json; charset=utf-8"};
+                                let _=request.respond(tiny_http::Response::from_string(payload).with_status_code(code)
+                                    .with_header(tiny_http::Header::from_bytes("Content-Type",content_type).unwrap()));
                                 return;
                             }
                         }
@@ -1047,9 +1039,24 @@ pub(crate) fn refer_window(
 /// Handle `/refer`: list referable sessions, or resolve one and return a window of its transcript.
 ///
 /// Runs on its own thread; every database lock is scoped so it is released before the transcript read,
-/// which locks again through `command_core::read_agent_transcript`.
+/// which locks again through `read_refer_transcript`.
 fn handle_refer(app: &AppCtx, req: ReferRequest) -> (u16, String) {
-    handle_refer_with_reader(app, req, crate::command_core::read_agent_transcript)
+    handle_refer_with_reader(app, req, read_refer_transcript)
+}
+
+/// Conversations search reads directly are read straight from the provider's records, whatever their
+/// size and without the history index, in the numbering `vsearch` reports. Other kinds keep the
+/// transcript reader.
+fn read_refer_transcript(app: &AppCtx, session_id: &str) -> Result<Vec<crate::agent::transcript::TranscriptMessage>, String> {
+    let session={
+        let db=app.db();let conn=db.conn.lock().map_err(|_|"database is unavailable")?;
+        crate::db::repo::get_session(&conn,session_id)?
+    }.ok_or("session not found")?;
+    let id=session.agent_session_id.as_deref().map(str::trim).filter(|id|!id.is_empty()).ok_or("No agent session id captured for this session yet")?;
+    match crate::search::conversation(session.kind,id,&std::sync::atomic::AtomicBool::new(false))? {
+        Some(messages)=>Ok(messages),
+        None=>crate::command_core::read_agent_transcript(app,session_id),
+    }
 }
 
 fn handle_refer_with_reader(
@@ -1876,6 +1883,7 @@ fn handle_search(app: &AppCtx, req: SearchRequest) -> (u16, String) {
                     "resolvedSessionId": resolved,
                     "totalSessions": result["totalSessions"],
                     "recordingOnlySessions": result["recordingOnlySessions"],
+                    "pendingSessions": result["pendingSessions"],
                     "hits": result["hits"],
                 })
                 .to_string(),

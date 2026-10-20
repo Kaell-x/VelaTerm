@@ -2,11 +2,10 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use rusqlite::{params,Connection,OptionalExtension};
 use serde_json::{json,Value};
 use crate::host::AppCtx;
 use crate::models::SessionKind;
-use super::{adapter,api::{self,Branch},projection::Record,source::{self,Segment},store::{digest,sql,RegisteredSource}};
+use super::{adapter,api::{self,Branch},projection::Record,source::{self,Segment},store::{digest,RegisteredSource,State}};
 
 pub(super) fn is_claude_child(source:&RegisteredSource) -> bool {
     source.segment.native_id.starts_with("claude-child:") && source.segment.path.parent().is_some_and(|path|path.ends_with("subagents"))
@@ -32,7 +31,7 @@ pub(super) fn annotate(kind:SessionKind,record:&Record,row:&mut Value) -> Result
     row["_child"]=json!({"id":id,"facts":facts});Ok(())
 }
 
-fn valid(id:&str) -> bool { !id.is_empty() && id.len()<=200 && id.bytes().all(|byte|byte.is_ascii_alphanumeric() || matches!(byte,b'-'|b'_')) }
+fn valid(id:&str) -> bool {!id.is_empty() && id.len()<=200 && id.bytes().all(|byte|byte.is_ascii_alphanumeric() || matches!(byte,b'-'|b'_'))}
 
 pub(super) fn public_row(mut row:Value) -> Value {
     if let Some(child)=row.as_object_mut().and_then(|object|object.remove("_child")) {
@@ -56,7 +55,7 @@ pub(super) fn merge(previous:&Value,current:&mut Value) {
     }
 }
 
-pub(super) fn codex_record(conn:&Connection,source:&RegisteredSource,record:&Record,item:&Value) -> Result<(),String> {
+pub(super) fn codex_record(state:&mut State,source:&RegisteredSource,record:&Record,item:&Value) -> Result<(),String> {
     let category=item["type"].as_str().unwrap_or_default().replace('_',"").to_ascii_lowercase();
     let (child,status,description)=if category=="subagentactivity" {
         let Some(child)=item["agent_thread_id"].as_str().or_else(||item["agentThreadId"].as_str()) else {return Ok(());};
@@ -72,10 +71,19 @@ pub(super) fn codex_record(conn:&Connection,source:&RegisteredSource,record:&Rec
     let mut row=json!({"id":id,"kind":"tool","name":"Task","input":{},"status":status,"isError":status=="failed",
         "detailAvailable":true,"_child":{"id":child,"facts":{"description":description,"model":item["model"]}}});
     if let Some(description)=description {row["input"]=json!({"description":adapter::preview(description,512)});}
-    let previous:Option<String>=conn.query_row("SELECT summary FROM rows WHERE source_id=?1 AND generation=?2 AND id=?3",
-        params![source.id,source.generation,id],|row|row.get(0)).optional().map_err(sql)?;
-    if let Some(previous)=previous {let previous:Value=serde_json::from_str(&previous).map_err(|_|"index_incomplete: child summary is invalid")?;merge(&previous,&mut row);}
-    adapter::write_row(conn,source,record,0,None,&row)
+    if let Some(previous)=state.summary(&id) {
+        let previous:Value=serde_json::from_str(previous).map_err(|_|"index_incomplete: child summary is invalid")?;merge(&previous,&mut row);
+    }
+    state.write_row(record,0,None,&row);Ok(())
+}
+
+/// The record of the newest visible part of `row` that names a child, with that child's id.
+fn association(state:&State,source:&RegisteredSource,row:&str) -> Option<(u64,String)> {
+    state.parts.get(row)?.iter().rev().filter(|(start,part)|api::record_visible(state,source,**start)
+        && source.segment.end_byte.is_none_or(|end|part.record_end<=end)).find_map(|(start,part)| {
+        let value:Value=serde_json::from_str(&part.summary).ok()?;
+        value["_child"]["id"].as_str().map(|id|(*start,id.to_owned()))
+    })
 }
 
 fn linked(parent:&Branch,row_id:&str) -> Result<(RegisteredSource,String),String> {
@@ -83,34 +91,22 @@ fn linked(parent:&Branch,row_id:&str) -> Result<(RegisteredSource,String),String
     // id does not confer access, and a row discarded by rewind cannot authorize its old descendants.
     let manifest=parent.manifest(row_id,0)?;
     if manifest["row"]["childAvailable"]!=true {return Err("detail_unavailable: this history row is not a verified child task".into());}
-    let conn=parent.store.connect()?;
-    let row_id=parent.resolve_row(&conn,row_id)?;
+    let row_id=parent.resolve_row(row_id);
     for source in parent.sources.iter().rev() {
-        let selected:Option<(String,u64,String)>=conn.query_row("SELECT json_extract(p.summary,'$._child.id'),p.record_start,r.projection FROM row_parts p
-            JOIN records r ON r.source_id=p.source_id AND r.generation=p.generation AND r.start=p.record_start
-            WHERE p.source_id=?1 AND p.generation=?2 AND p.row_id=?3 AND r.active=1
-            AND (?4 IS NULL OR p.record_end<=?4) AND (?5 IS NULL OR p.ordinal IS NULL OR p.ordinal<?5)
-            AND json_type(p.summary,'$._child.id')='text' ORDER BY p.record_start DESC LIMIT 1",
-            params![source.id,source.generation,row_id,source.segment.end_byte,source.segment.end_ordinal],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional().map_err(sql)?;
-        if let Some((id,start,projection))=selected {if valid(&id) {
-            let value:Value=serde_json::from_str(&projection).map_err(|_|"index_incomplete: parent association projection is invalid")?;
-            let mut fields=conn.prepare("SELECT ref,path FROM fields WHERE source_id=?1 AND generation=?2 AND record_start=?3 AND encoding='string'").map_err(sql)?;
-            let mut fields=fields.query(params![source.id,source.generation,start]).map_err(sql)?;
-            let mut verified_child=false;
-            while let Some(field)=fields.next().map_err(sql)? {
-                let reference:String=field.get(0).map_err(sql)?;let path:String=field.get(1).map_err(sql)?;
-                if !super::projection::identity_path(&path) {continue;}
-                let expected=value.pointer(&path).and_then(Value::as_str).ok_or("index_incomplete: parent identity projection is unavailable")?;
-                let (text,_,end,size)=api::read_piece(&conn,source,&reference,0,0)?;
-                if end!=size || text!=expected {return Err("source_changed: parent child association changed".into());}
-                if text==id && (path=="/toolUseResult/agentId" || path.ends_with("/agent_thread_id") || path.ends_with("/agentThreadId")
-                    || path.starts_with("/payload/item/receiver_thread_ids/") || path.starts_with("/payload/item/receiverThreadIds/")
-                    || path.starts_with("/params/item/receiver_thread_ids/") || path.starts_with("/params/item/receiverThreadIds/")
-                    || path=="/part/state/metadata/sessionId" || path=="/part/state/metadata/sessionID") {verified_child=true;}
-            }
-            if !verified_child {return Err("index_incomplete: parent has no verified original child identity".into());}
-            return Ok((source.clone(),id));
-        }}
+        let found={let state=source.current()?;association(&state,source,&row_id)};
+        let Some((start,id))=found else {continue;};
+        if !valid(&id) {continue;}
+        // The original record must still name this child: it is parsed again from verified bytes.
+        let record=super::store::reproject(source,start,&mut |_|Ok(()))?;
+        let verified=record.fields.iter().filter(|field|field.encoding=="string" && super::projection::identity_path(&field.path)).any(|field| {
+            let path=field.path.as_str();
+            record.value.pointer(path).and_then(Value::as_str)==Some(id.as_str()) && (path=="/toolUseResult/agentId" || path.ends_with("/agent_thread_id") || path.ends_with("/agentThreadId")
+                || path.starts_with("/payload/item/receiver_thread_ids/") || path.starts_with("/payload/item/receiverThreadIds/")
+                || path.starts_with("/params/item/receiver_thread_ids/") || path.starts_with("/params/item/receiverThreadIds/")
+                || path=="/part/state/metadata/sessionId" || path=="/part/state/metadata/sessionID")
+        });
+        if !verified {return Err("source_changed: parent child association changed".into());}
+        return Ok((source.clone(),id));
     }
     Err("detail_unavailable: this history row has no verified child association".into())
 }
@@ -139,7 +135,7 @@ fn child(parent:Branch,row:&str,seen:&mut HashSet<(String,String)>) -> Result<Br
             }(sources,id.clone(),resolved.error)
         },
         SessionKind::Opencode=>{
-            (vec![super::native_database::register(&parent.store,origin.segment.path.clone(),&id)?],id.clone(),None)
+            (vec![super::opencode::register(&parent.store,origin.segment.path.clone(),&id)?],id.clone(),None)
         },
         _=>return Err("detail_unavailable: this provider has no child history adapter".into()),
     };
@@ -150,11 +146,11 @@ fn child(parent:Branch,row:&str,seen:&mut HashSet<(String,String)>) -> Result<Br
 
 pub(super) struct Parent {branch:Branch,row:String,child:String,revision:String}
 fn revision(branch:&Branch) -> Result<String,String> {
-    let conn=branch.store.connect()?;let mut signature=Vec::new();
+    let mut signature=Vec::new();
     for source in &branch.sources {
-        let (generation,revision):(String,String)=conn.query_row("SELECT generation,branch_revision FROM sources WHERE id=?1",[&source.id],|row|Ok((row.get(0)?,row.get(1)?))).map_err(sql)?;
-        if generation!=source.generation {return Err("source_changed: parent history generation changed".into());}
-        signature.push(json!([source.id,generation,revision,source.segment.end_byte,source.segment.end_ordinal]));
+        let state=source.index.read();
+        if state.generation!=source.generation || state.stale {return Err("source_changed: parent history generation changed".into());}
+        signature.push(json!([source.id,state.generation,state.branch_revision,source.segment.end_byte,source.segment.end_ordinal]));
     }
     Ok(digest(serde_json::to_string(&signature).unwrap().as_bytes()))
 }
@@ -182,14 +178,22 @@ pub fn path(args:&Value) -> Result<Vec<String>,String> {
 
 pub fn task(app:&AppCtx,session:&str,task:&str) -> Result<(Branch,Vec<String>),String> {
     if !valid(task) {return Err("detail_unavailable: child task identity is invalid".into());}
-    let root=api::prepare(app,session)?;let conn=root.store.connect()?;
+    let root=api::prepare(app,session)?;
     for source in root.sources.iter().rev() {
-        let row:Option<String>=conn.query_row("SELECT p.row_id FROM row_parts p JOIN records r
-            ON r.source_id=p.source_id AND r.generation=p.generation AND r.start=p.record_start
-            WHERE p.source_id=?1 AND p.generation=?2 AND json_extract(p.summary,'$._child.id')=?3 AND r.active=1
-            AND (?4 IS NULL OR p.record_end<=?4) AND (?5 IS NULL OR p.ordinal IS NULL OR p.ordinal<?5)
-            ORDER BY p.record_start DESC LIMIT 1",params![source.id,source.generation,task,source.segment.end_byte,source.segment.end_ordinal],|row|row.get(0)).optional().map_err(sql)?;
-        if let Some(row)=row {let path=vec![row];return Ok((descend(root,&path)?,path));}
+        let found={
+            let state=source.current()?;
+            let mut newest:Option<(u64,String)>=None;
+            for (row,parts) in &state.parts {
+                for (start,part) in parts.iter().rev() {
+                    if !api::record_visible(&state,source,*start) || source.segment.end_byte.is_some_and(|end|part.record_end>end) {continue;}
+                    let named=serde_json::from_str::<Value>(&part.summary).ok().is_some_and(|value|value["_child"]["id"]==task);
+                    if named && newest.as_ref().is_none_or(|(at,_)|*start>*at) {newest=Some((*start,row.to_string()));}
+                    if named {break;}
+                }
+            }
+            newest.map(|(_,row)|row)
+        };
+        if let Some(row)=found {let path=vec![row];return Ok((descend(root,&path)?,path));}
     }
     Err("index_busy: this task has no indexed parent association yet".into())
 }
@@ -220,7 +224,7 @@ mod tests {
         let raw=task("root",None,"call","child",false);let root=root(&temp,&raw);let page=root.page(None,None,None).unwrap();
         assert_eq!(page["rows"].as_array().unwrap().len(),1);let row=&page["rows"][0];let parent_id=row["id"].as_str().unwrap().to_owned();
         assert_eq!(row["childAvailable"],true);assert_eq!(row["subagent"]["totalTokens"],719);assert!(row.get("_child").is_none());
-        assert_eq!(root.store.connect().unwrap().query_row("SELECT count(*) FROM sources",[],|row|row.get::<_,u64>(0)).unwrap(),1);
+        assert_eq!(super::super::store::registered(&temp.0),1);
         assert!(descend(root.clone(),&["child".into()]).err().unwrap().starts_with("detail_unavailable:"));
         assert!(descend(root.clone(),&[parent_id.clone()]).err().unwrap().starts_with("source_missing:"));
         let mut child_raw=String::new();let mut parent=None;for index in 0..160 {
@@ -233,7 +237,7 @@ mod tests {
         let child=indexed(descend(root.clone(),&[parent_id.clone()]).unwrap());let page=child.page(None,None,None).unwrap();
         assert_eq!(page["rows"].as_array().unwrap().len(),60);assert_eq!(page["knownRows"],161);assert_eq!(page["hasMore"],true);
         assert!(page.to_string().len()<super::super::limits::PAGE_BYTES);let nested=page["rows"].as_array().unwrap().iter().find(|row|row["kind"]=="tool").unwrap()["id"].as_str().unwrap().to_owned();
-        assert_eq!(child.store.connect().unwrap().query_row("SELECT count(*) FROM sources",[],|row|row.get::<_,u64>(0)).unwrap(),2);
+        assert_eq!(super::super::store::registered(&temp.0),2);
         assert!(descend(root.clone(),&[nested.clone()]).is_err());
         let grandchild=indexed(descend(root.clone(),&[parent_id.clone(),nested]).unwrap());let page=grandchild.page(None,None,None).unwrap();assert_eq!(page["rows"][0]["bodyAvailable"],true);
         let field=grandchild.manifest(page["rows"][0]["id"].as_str().unwrap(),0).unwrap()["fields"][0].clone();let reference=field["detailRef"].as_str().unwrap();
@@ -243,7 +247,7 @@ mod tests {
         let mut original=first["text"].as_str().unwrap().to_owned();let mut cursor=Some(cursor.to_owned());while let Some(next)=cursor {
             let part=grandchild.detail_page(reference,None,Some(&next)).unwrap();original.push_str(part["text"].as_str().unwrap());cursor=part["nextCursor"].as_str().map(str::to_owned);
         }assert_eq!(original,long);
-        root.store.connect().unwrap().execute("UPDATE records SET active=0 WHERE source_id=?1",[&root.sources[0].id]).unwrap();
+        root.sources[0].index.write().records.values_mut().for_each(|record|record.active=false);
         assert!(grandchild.detail_page(reference,None,None).is_err());assert!(grandchild.detail_facts(reference,None).is_err());
         assert!(child.page(None,None,None).is_err());assert!(descend(root,&[parent_id]).is_err());assert_eq!(std::fs::read_to_string(directory.join("agent-child.jsonl")).unwrap(),child_raw);
         assert_eq!(std::fs::read_to_string(directory.join("agent-grandchild.jsonl")).unwrap(),grandchild_raw);
@@ -260,7 +264,7 @@ mod tests {
         assert_eq!(child.detail(reference,None,0).unwrap()["text"],"Original child");
         let rewritten=original.replace("\"agentId\":\"child\"","\"agentId\":\"other\"");assert_eq!(rewritten.len(),original.len());assert_ne!(rewritten,original);
         std::fs::write(&root.sources[0].segment.path,&rewritten).unwrap();
-        assert!(child.detail(reference,None,0).unwrap_err().starts_with("source_changed:"));
+        let error=child.detail(reference,None,0).unwrap_err();assert!(error.starts_with("source_changed:"),"{error}");
         assert!(child.page(None,None,None).is_err());
     }
 

@@ -2196,6 +2196,17 @@ select.sv-pill {
   line-height: 14px;
   text-align: center;
 }
+/* Background tasks still running: the chip takes the color the sidebar uses for the same state. */
+.sv-tasks-running,
+.sv-tasks-running:hover,
+:where([data-theme="dark"]) .sv-tasks-running {
+  color: var(--status-background);
+}
+.sv-tasks-running .sv-chip-badge {
+  background: color-mix(in oklch, var(--status-background) 18%, transparent);
+  color: var(--status-background);
+  font-weight: 600;
+}
 /* The popover is anchored above the chip like the choice menus; its rows are read-only text plus one or
    two small actions on the right. */
 .sv-popover-row {
@@ -2224,6 +2235,12 @@ select.sv-pill {
 .sv-popover-sub {
   color: var(--text-faint);
   font-size: calc(var(--ui-fs) - 2px);
+}
+/* A task still running reads in the same color as the chip, so it stands out from the finished ones kept
+   below it until the next turn. */
+.sv-task-row-running .sv-popover-title,
+.sv-task-row-running .sv-task-row-status {
+  color: var(--status-background);
 }
 .sv-popover-action,
 .sv-popover-wide {

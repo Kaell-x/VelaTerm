@@ -1,3 +1,26 @@
+## v0.2.12 — 2026-10-20
+
+- 🛑 Das Stoppen eines Claude-Durchgangs in der Gesprächsansicht wirkt sofort, und Ihre nächste Nachricht wird direkt gesendet – auch wenn der Computer stark ausgelastet ist.
+- 🪟 Menükürzel wie Cmd+D und Klicks auf Benachrichtigungen wirken nur im zugehörigen Fenster, sodass Remote-Fenster nicht mehr zusammen mit dem Hauptfenster geteilt werden.
+- 🔎 Die globale Suche liefert bereits während der Indizierung Ergebnisse und zeigt an, wie viele Sitzungen noch indiziert werden.
+- ⚡ Die globale Suche indiziert Claude-, Codex-, Pi- und OMP-Gespräche direkt aus ihren Dateien – deutlich schneller und ohne den Verlaufscache der Gespräche zu füllen –, und ein geöffnetes Ergebnis springt genau zur passenden Nachricht.
+- 🧠 Der Gesprächsverlauf wird direkt aus den Originalaufzeichnungen der Agenten gelesen statt aus einer separaten Kopie auf dem Datenträger; beim Start werden die Ordner `chat-index` und `chat-spool` entfernt, um Speicherplatz freizugeben.
+- 📱 Auf dem Smartphone schlagen Sitzungen in der Terminalansicht den Wechsel zur Gesprächsansicht vor; nach Ihrer Bestätigung wechselt auch die Desktop-App die Sitzung.
+- 👀 Geteilte Verbindungen listen Sitzungen in der Terminalansicht schreibgeschützt auf, und nur der Besitzer des Hosts kann sie auf die Gesprächsansicht umstellen.
+- 🌐 Die Übersetzungseinstellungen enthalten neu „Übersetzung standardmäßig aktivieren“, das den anfänglichen Übersetzungsstatus von Sitzungen ohne gespeicherte Auswahl festlegt.
+- 🌳 Der Sitzungsbaum fasst Sitzungen, die denselben Worktree verwenden, unter einer gemeinsamen Worktree-Zeile zusammen.
+- 📄 Kurze Antworten in der Gesprächsansicht, auch Nachrichten mit Bildern, zeigen keinen Link „Vollständigen Inhalt lesen“ mehr.
+- 🔕 Die Schaltfläche zum Löschen aller Benachrichtigungsmarkierungen befindet sich jetzt am linken Ende der unteren Leiste des Sitzungsbaums.
+- 🤖 Die Dialoge für neue und fortgesetzte Sitzungen zeigen Agentensymbole in der Liste der Agententypen, und die Berechtigungsliste öffnet sich nach oben, wenn darunter nicht genug Platz ist.
+- 🩹 Die Gesprächsansicht meldet bei stark beanspruchtem Speicher keine fehlerhaften Einträge im Verlauf mehr und lädt kurz darauf weiter.
+- 📝 Im Markdown-Editor entfernen Rücktaste und Umschalt+Tab die Nummerierung eines leeren Listeneintrags oder eines nicht nummerierten Absatzes innerhalb einer Liste.
+- 🔵 Der Chip „Aufgaben“ in der Gesprächsansicht wird cyanfarben – in der Farbe, die der Sitzungsbaum für Hintergrundarbeit verwendet –, solange noch Hintergrundaufgaben laufen; laufende Aufgaben erscheinen in der Aufgabenliste ebenfalls in Cyan und mit dem Hinweis „Läuft“.
+- 🗑️ Beim Löschen einer Sitzung wird nicht mehr angeboten, Git-Worktrees zu entfernen; dafür gibt es „Delete worktree…“.
+- 🔁 Der Übersetzungsstatus wird bei jeder Änderung aktualisiert statt alle 10 Sekunden, und die Übersetzungseinstellungen prüfen die installierten Agenten bei jedem Öffnen erneut.
+- 💤 Der Infobereich unterbricht die Erfassung der Prozessressourcen, solange das Fenster ausgeblendet ist.
+- ⏱️ Arbeitsanzeige und Durchgangstimer der Gesprächsansicht fehlen nicht mehr und bleiben nicht mehr stehen, wenn ein Durchgang beginnt oder endet, während Sie die Sitzung wechseln.
+- 🔗 `vrefer` nummeriert Nachrichten genauso wie `vsearch`, und bei abgezweigten Codex-Sitzungen enthalten `vrefer` und die globale Suche auch den Verlauf des übergeordneten Gesprächs.
+
 ## v0.2.11 — 2026-10-18
 
 - 🧪 Experimentelle HTML-Vorschauen öffnen sich neben Unterhaltungen oder in Tabs, aktualisieren sich bei Dateiänderungen und bieten Quelltext, Konsole und Versionsfunktionen; die native und plattformübergreifende Abnahme steht noch aus.

@@ -1,20 +1,17 @@
-//! Shared bounded reads for native history and live protocol records.
+//! Bounded reads of native conversation history, indexed in memory from the providers' own records.
 
 pub mod limits;
 pub mod projection;
 pub mod source;
 pub mod store;
+mod fields;
 pub mod adapter;
 pub mod api;
 pub mod live_view;
 pub mod search;
-pub mod live;
-pub mod protocol_source;
 pub mod sqlite_source;
-mod native_database;
-mod kiro_database;
-mod kiro_pair;
-pub mod reconciliation;
+mod opencode;
+mod kiro;
 pub mod attachments;
 pub mod children;
 pub mod rewind;
@@ -24,14 +21,8 @@ pub mod event_stream;
 pub mod markdown;
 pub mod exports;
 pub mod prose;
-pub mod prose_reader;
 pub mod context;
 pub mod refer;
-mod ask;
-mod scheduler;
-mod readers;
-mod recovery;
-mod cache;
 pub mod work;
 mod antigravity_adapter;
 

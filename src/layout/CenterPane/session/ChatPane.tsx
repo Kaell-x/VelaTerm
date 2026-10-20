@@ -257,6 +257,7 @@ export function ChatPane({
   readOnly = false,
   historyOnly = false,
   initialMessageIndex,
+  initialRecordOffset,
   initialRowId,
   mobile = false,
   onActivate,
@@ -273,6 +274,8 @@ export function ChatPane({
   readOnly?: boolean;
   historyOnly?: boolean;
   initialMessageIndex?: number;
+  /** Byte offset of a search hit's first record, which locates it more exactly than its message number. */
+  initialRecordOffset?: number;
   initialRowId?: string;
   mobile?: boolean;
   onActivate: (paneId: string, id: string) => void;
@@ -314,6 +317,8 @@ export function ChatPane({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const historyBusy = useRef(false);
+  // A snapshot request is in flight; page loads wait so its result does not replace the page they add.
+  const refreshing = useRef(false);
   const historyRequest = useRef<Promise<ChatSnapshot | undefined> | null>(null);
   const historyGeneration = useRef(0);
   const refreshRef = useRef<() => Promise<void>>(async () => {});
@@ -747,22 +752,27 @@ export function ChatPane({
       handleEvent(event);
     }).catch(error => { un = null; throw error; });
     let loading = false;
+    // The conversation is on screen. Later refreshes (index progress, reconnects that succeeded) update it
+    // in place instead of covering it with the synchronizing notice again.
+    let synced = false;
     let receiptsAvailable = false;
     const refresh = async () => {
       if (loading || disposed) return;
       if (historyBusy.current) {progressTimer = setTimeout(() => void refresh(), 1000);return;}
       loading = true;
+      refreshing.current = true;
       historyGeneration.current += 1;
       setHistoryError(null);
-      setSyncState("loading");
+      if (!synced) setSyncState("loading");
       buffered = [];
       const requestStarted = performance.now();
       try {
         await subscribe();
         if (disposed) return;
         const known = snapshotRef.current;
-        const location = known?.pendingLocation ?? (initialLocation ? { ...historyLocation(session.id), ...(initialRowId ? {anchor:initialRowId} : initialMessageIndex!==undefined ? {messageIndex: initialMessageIndex} : {}) } : {});
-        const hasLocation = Boolean(location.before || location.after || location.anchor || location.messageIndex!==undefined);
+        const location = known?.pendingLocation ?? (initialLocation ? { ...historyLocation(session.id), ...(initialRowId ? {anchor:initialRowId} : {
+          ...(initialMessageIndex!==undefined ? {messageIndex: initialMessageIndex} : {}), ...(initialRecordOffset!==undefined ? {recordOffset: initialRecordOffset} : {}) }) } : {});
+        const hasLocation = Boolean(location.before || location.after || location.anchor || location.messageIndex!==undefined || location.recordOffset!==undefined);
         let response: ChatSnapshot;
         try {
           response = await chatSnapshot(session.id, { historyOnly,
@@ -804,6 +814,7 @@ export function ChatPane({
           cacheChat(cacheId, snapshotRef.current);
         }
         setSyncState("ready");
+        synced = true;
         setHistoryError(snapshot.historyError ?? null);
         const metric = { requestMs: performance.now() - requestStarted, commitMs: 0, rows: snapshot.rows.length, mode: snapshot.pageKind ?? "full" };
         chatSyncMetrics.push(metric);
@@ -870,11 +881,12 @@ export function ChatPane({
         }
         pendingEvents.filter(event => !["rows", "replaceRows", "queued", "reset", "notification", "models"].includes(event.type)).forEach(handleEvent);
       } catch (err) {
-        if (!disposed) { setError(String(err)); setSyncState("failed"); }
+        if (!disposed) { setError(String(err)); setSyncState("failed"); synced = false; }
       } finally {
         const events = buffered ?? [];
         buffered = null;
         loading = false;
+        refreshing.current = false;
         clearTimeout(progressTimer);
         if (!disposed && snapshotRef.current?.protocolVersion === 2 && (historyOnly || snapshotRef.current.coverage === "partial" || snapshotRef.current.indexing)) {
           progressTimer = setTimeout(() => void refresh(), snapshotRef.current.coverage === "complete" && !snapshotRef.current.indexing ? 5000 : 1000);
@@ -886,6 +898,7 @@ export function ChatPane({
     refreshRef.current = refresh;
     void refresh();
     const disconnect = onTransportDisconnect(() => {
+      synced = false;
       setSyncState("failed");
       setTurnStartedAt(undefined);
       setPermissions([]);
@@ -907,7 +920,7 @@ export function ChatPane({
       disconnect();
       void un?.then((f) => f()).catch(() => {});
     };
-  }, [session.id, session.kind, applyRows, t, cacheId, historyOnly, initialMessageIndex,initialRowId]);
+  }, [session.id, session.kind, applyRows, t, cacheId, historyOnly, initialMessageIndex,initialRecordOffset,initialRowId]);
 
   useEffect(() => {
     if (snapshotRef.current) {
@@ -918,7 +931,7 @@ export function ChatPane({
 
   const loadHistory = async (before = rows[0]?.id) => {
     if (historyRequest.current) return historyRequest.current;
-    if (historyBusy.current || !hasMore || syncState !== "ready" || !before) return;
+    if (historyBusy.current || refreshing.current || !hasMore || syncState !== "ready" || !before) return;
     const rememberPosition = () => {
       const scroll = scrollRef.current;
       if (!scroll || pinnedRef.current) return;
@@ -967,7 +980,7 @@ export function ChatPane({
 
   const loadNewerHistory = async () => {
     const known = snapshotRef.current;
-    if (known?.protocolVersion !== 2 || !hasNewer || historyBusy.current || syncState !== "ready") return;
+    if (known?.protocolVersion !== 2 || !hasNewer || historyBusy.current || refreshing.current || syncState !== "ready") return;
     const after = rowsRef.current.at(-1)?.id;
     if (!after) return;
     historyBusy.current = true;setHistoryLoading(true);setHistoryError(null);

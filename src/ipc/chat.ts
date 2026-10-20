@@ -509,7 +509,7 @@ export interface ChatSnapshot {
   snapshotRevision?: string;
   coverage?: "complete" | "partial" | "error";
   indexing?: boolean;
-  pendingLocation?: { before?: string; after?: string; anchor?: string; messageIndex?: number };
+  pendingLocation?: { before?: string; after?: string; anchor?: string; messageIndex?: number; recordOffset?: number };
   locatedRowId?: string;
   indexedBytes?: number;
   sourceBytes?: number;
@@ -902,13 +902,14 @@ export function chatModels(sessionId: string): Promise<ChatModel[]> {
 }
 
 /** Negotiate a bounded conversation window; image and history body bytes remain deferred. */
-export async function chatSnapshot(sessionId: string, window?: { before?: string; from?: string; since?: number; epoch?: number; protocolVersion?: 2; historyGeneration?: string; after?: string; anchor?: string; readJobId?: string; historyOnly?: boolean; messageIndex?: number; controlOnly?: boolean; childPath?: string[] }): Promise<ChatSnapshot> {
+export async function chatSnapshot(sessionId: string, window?: { before?: string; from?: string; since?: number; epoch?: number; protocolVersion?: 2; historyGeneration?: string; after?: string; anchor?: string; readJobId?: string; historyOnly?: boolean; messageIndex?: number; recordOffset?: number; controlOnly?: boolean; childPath?: string[] }): Promise<ChatSnapshot> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const snapshot = await Promise.race([
     invoke<ChatSnapshot>("chat_snapshot", { sessionId, ...(!window?.controlOnly ? { preferBounded: true } : {}),
       ...(window?.historyOnly !== undefined ? { historyOnly: window.historyOnly } : {}),
       ...(window?.childPath?.length ? { childPath: window.childPath } : {}),
-      ...(window?.messageIndex !== undefined ? { messageIndex: window.messageIndex } : {}), ...(window ? { window } : {}),
+      ...(window?.messageIndex !== undefined ? { messageIndex: window.messageIndex } : {}),
+      ...(window?.recordOffset !== undefined ? { recordOffset: window.recordOffset } : {}), ...(window ? { window } : {}),
       ...(window?.protocolVersion ? { protocolVersion: window.protocolVersion, historyGeneration: window.historyGeneration, after: window.after, anchor: window.anchor, readJobId: window.readJobId } : {}) }),
     new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Conversation synchronization timed out")), 30_000); }),
   ]).finally(() => clearTimeout(timer));
@@ -971,6 +972,11 @@ export function setSessionEngine(
   engine: "tui" | "chat",
 ): Promise<void> {
   return invoke("set_session_engine", { sessionId, engine });
+}
+
+/** On a share connection: whether this visitor may move a terminal-view session to the conversation view. */
+export function shareAccess(): Promise<{ canSwitchEngine: boolean }> {
+  return invoke("share_access");
 }
 
 /** Subscribe to everything happening in one conversation. */

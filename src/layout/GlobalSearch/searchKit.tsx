@@ -120,7 +120,8 @@ export function ContentSearchControls({search}:{search:ContentSearch}) {
       <button type="button" className="vlx-btn" onClick={search.retry}>{t("common.retry")}</button></> :
       <span role="status" style={{flex:1,color:"var(--text-muted)"}}>{search.loading
         ? t("search.progress",search.page?.scannedSessions ?? 0,fmtBytes(search.page?.scannedBytes ?? 0))
-        : search.page?.totalSessions!==undefined ? t("search.summary",search.page.totalMatches ?? 0,search.page.totalSessions) : ""}</span>}
+        : search.page?.totalSessions!==undefined ? t("search.summary",search.page.totalMatches ?? 0,search.page.totalSessions)
+          +(search.page.pendingSessions ? ` · ${t("search.pending",search.page.pendingSessions)}` : "") : ""}</span>}
     {search.loading && <button type="button" className="vlx-btn" onClick={search.cancel}>{t("common.cancel")}</button>}
     <button type="button" className="vlx-btn" disabled={search.loading || search.page?.previousCursor==null} onClick={search.previous}>{t("common.prev")}</button>
     <button type="button" className="vlx-btn" disabled={search.loading || search.page?.nextCursor==null} onClick={search.next}>{t("common.next")}</button>
@@ -677,7 +678,8 @@ const Preview = memo(function Preview({
 
   // Transcript hits render cached records, showing loading until available.
   if (hasPagedHistoryKind(sess.kind)) return <SessionContentViewer session={sess} source="transcript"
-    highlightTerms={active.match.matched} scrollToMessageIndex={active.match.messageIndex ?? undefined} scrollToRowId={active.match.rowId} />;
+    highlightTerms={active.match.matched} scrollToMessageIndex={active.match.messageIndex ?? undefined} scrollToRecordOffset={active.match.recordOffset}
+    scrollToRowId={active.match.rowId} />;
   const msgs = cache.get(active.sessionId);
   if (msgs === undefined) {
     return <CenterMessage text={t("archive.loadingTranscript")} />;

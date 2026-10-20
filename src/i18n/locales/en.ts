@@ -21,6 +21,8 @@ const en = {
   "translation.title": "Translation",
   "translation.enable": "Enable translation",
   "translation.visibility": "Translation controls appear in conversations only while this feature is enabled.",
+  "translation.defaultEnabled": "Enable translation by default",
+  "translation.defaultEnabledHint": "Conversations without saved translation preferences use this default. Changes are saved automatically.",
   "translation.conversationKinds": "Conversation agent types",
   "translation.conversationKindsHint": "Translation controls and automatic translation apply only to conversations with the selected agent types. Changes are saved automatically.",
   "translation.chooseConversationKinds": "Select agent types",
@@ -1245,8 +1247,6 @@ const en = {
     `Delete group "${name}"? All its subgroups and sessions will also be deleted. This cannot be undone.`,
   "tree.deleteSessionBody": (name: string) =>
     `Delete session "${name}" (and all its child sessions)? This cannot be undone.`,
-  "tree.deleteWorktrees": (n: number) =>
-    `Also remove associated git worktrees (${n} total; removal may fail if the working tree has changes)`,
 
   // Session information dialog
   "info.name": "Name",
@@ -1353,6 +1353,8 @@ const en = {
   "search.archivedBadge": "Archived",
   "search.summary": (matches: number, sessions: number) =>
     `${matches} ${matches === 1 ? "match" : "matches"} · ${sessions} ${sessions === 1 ? "session" : "sessions"}`,
+  "search.pending": (n: number) =>
+    n === 1 ? "1 session is still being indexed, so results may be incomplete." : `${n} sessions are still being indexed, so results may be incomplete.`,
   "search.matchPosition": (n: number, total: number) => `${n} of ${total}`,
   "search.roleTerminal": "Terminal",
   "search.collapseGroup": "Collapse",
@@ -1780,6 +1782,10 @@ const en = {
   "mobile.empty2":
     "Create one on the desktop app or a computer browser and it will appear here automatically.",
   "mobile.back": "‹ Back",
+  "mobile.tuiSuggest": "This session runs in terminal view. Conversation view works better on a phone.",
+  "mobile.tuiShareReadOnly": "This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.",
+  "mobile.tuiShareHost": "This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.",
+  "mobile.switchToConversation": "Switch to conversation view",
   "mobile.selCopy": "Copy",
   "mobile.selCancel": "Cancel",
 
@@ -1983,6 +1989,8 @@ const en = {
   "session.switchBody": "The turn in progress will stop. Your conversation is kept.",
   "session.switchBodyBackground": "Background tasks the agent started may stop, and the agent won't be told when they finish. Your conversation is kept.",
   "session.switchConfirm": "Switch",
+  "session.switchBodyIdle": "The agent in the terminal stops and continues in conversation view. Your conversation is kept.",
+  "session.switchDesktopNote": "The desktop app will also show this session in conversation view.",
   "session.terminalViewHint": "Click here to switch back to terminal view.",
   "session.loading": "Reading the conversation…",
   "session.unavailable": "This conversation can't be read yet",

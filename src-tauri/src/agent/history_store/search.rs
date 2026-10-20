@@ -10,7 +10,6 @@ use serde_json::{json,Value};
 use crate::host::AppCtx;
 use super::api::{self,Branch};
 use super::limits::*;
-use super::store::sql;
 
 struct Job {
     session:String,
@@ -90,11 +89,9 @@ fn read_with(session:&str,query:&str,cursor:Option<&str>,mut prepare:impl FnMut(
         (id.to_owned(),job,sequence)
     } else {
         let mut branch=prepare()?;
-        let conn=branch.store.connect()?;
         let mut complete=branch.error.is_none();
         for source in &mut branch.sources {
-            let (water,status):(u64,String)=conn.query_row("SELECT indexed_bytes,status FROM sources WHERE id=?1 AND generation=?2",
-                rusqlite::params![source.id,source.generation],|r|Ok((r.get(0)?,r.get(1)?))).map_err(sql)?;
+            let (water,status)={let state=source.current()?;(state.indexed,state.status.clone())};
             complete&=status=="complete" || source.segment.end_byte.is_some_and(|end|water>=end);
             source.segment.end_byte=Some(source.segment.end_byte.unwrap_or(water).min(water));
         }
@@ -131,23 +128,15 @@ fn read_with(session:&str,query:&str,cursor:Option<&str>,mut prepare:impl FnMut(
             let Some((order,row))=job.pending.pop_front() else {finished=true;break;};
             job.after=Some(order.clone()); job.rows+=1;
             let row_id=row["id"].as_str().unwrap_or_default().to_owned();
-            let conn=job.branch.store.connect()?;
             let mut fields=VecDeque::new();
             for source in &job.branch.sources {
-                let mut stmt=conn.prepare("SELECT f.ref,rf.label FROM row_fields rf JOIN fields f ON f.ref=rf.ref JOIN records r
-                    ON r.source_id=f.source_id AND r.generation=f.generation AND r.start=f.record_start
-                    WHERE rf.source_id=?1 AND rf.generation=?2 AND rf.row_id=?3 AND r.active=1 AND r.end<=?4
-                    AND (EXISTS(SELECT 1 FROM append_fields WHERE ref=f.ref) OR NOT EXISTS(SELECT 1 FROM row_fields newer JOIN fields nf ON nf.ref=newer.ref JOIN records nr
-                        ON nr.source_id=nf.source_id AND nr.generation=nf.generation AND nr.start=nf.record_start
-                        WHERE newer.source_id=rf.source_id AND newer.generation=rf.generation AND newer.row_id=rf.row_id
-                        AND newer.label=rf.label AND nf.path=f.path AND nf.record_start>f.record_start AND nr.active=1 AND nr.end<=?4
-                        AND (?5 IS NULL OR nr.ordinal IS NULL OR nr.ordinal<?5)))
-                    AND rf.label!='original' AND f.encoding IN ('string','slice','json') AND (f.parent_ref IS NULL OR NOT EXISTS(SELECT 1 FROM row_fields parent
-                        WHERE parent.source_id=rf.source_id AND parent.generation=rf.generation AND parent.row_id=rf.row_id AND parent.ref=f.parent_ref))
-                    AND (?5 IS NULL OR r.ordinal IS NULL OR r.ordinal<?5) ORDER BY rf.sequence").map_err(sql)?;
-                let values=stmt.query_map(rusqlite::params![source.id,source.generation,row_id,source.segment.end_byte,source.segment.end_ordinal],|r|Ok((r.get(0)?,r.get(1)?))).map_err(sql)?;
-                for value in values {let (reference,label):(String,String)=value.map_err(sql)?;
-                    if label!="body_image" && !label.starts_with("attachment:") {fields.push_back((reference,label));}
+                let state=source.current()?;
+                let listed=job.branch.row_fields(&state,source,&row_id);
+                for (field,meta) in &listed {
+                    if field.label=="original" || !matches!(meta.encoding.as_str(),"string"|"slice"|"json") {continue;}
+                    // A document nested in a string is searched through its outer field.
+                    if meta.parent.as_ref().is_some_and(|parent|listed.iter().any(|(_,other)|other==&**parent)) {continue;}
+                    if field.label!="body_image" && !field.label.starts_with("attachment:") {fields.push_back((field.reference.clone(),field.label.clone()));}
                 }
             }
             // Only content searchable in the existing view belongs here; ids, states, and wire keys do

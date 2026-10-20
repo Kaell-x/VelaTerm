@@ -1,11 +1,34 @@
 # Changelog
 
-> Created: 2026-07-09 16:10 · Updated: 2026-10-18
+> Created: 2026-07-09 16:10 · Updated: 2026-10-20
 
 All notable changes to VelaTerm are documented here, newest first.
 v0.1.91 is the first public release; earlier version numbers were internal iterations and are not covered.
 
 ---
+
+## v0.2.12 — 2026-10-20
+
+- 🛑 Stopping a Claude turn in conversation view takes effect immediately, and your next message is sent right away, even when the computer is under heavy load.
+- 🪟 Menu shortcuts such as Cmd+D and notification clicks act only in the window they belong to, so remote windows no longer split along with the main window.
+- 🔎 Global search returns results while indexing is still in progress and shows how many sessions are still being indexed.
+- ⚡ Global search indexes Claude, Codex, Pi and OMP conversations directly from their files, which is much faster and no longer fills the conversation history cache, and opening a result jumps to the exact message.
+- 🧠 Conversation history is read straight from the agents' original records instead of a separate on-disk copy, so the `chat-index` and `chat-spool` folders are removed at startup to free disk space.
+- 📱 On phones, sessions running in terminal view suggest switching to conversation view; after you confirm, the desktop app switches the session too.
+- 👀 Shared connections list sessions running in terminal view as read-only, and only the host's owner can switch them to conversation view.
+- 🌐 Translation settings add Enable translation by default, which sets the initial translation state for sessions without a saved choice.
+- 🌳 The session tree groups sessions that use the same worktree under a single worktree row.
+- 📄 Short replies in conversation view, including messages with images, no longer show a Read complete content link.
+- 🔕 The button that clears all notification badges moves to the left end of the session tree's bottom bar.
+- 🤖 The new session and resume session dialogs show agent icons in the agent type list, and the permission list opens upward when there isn't enough space below.
+- 🩹 Conversation view no longer reports history as containing malformed records while storage is busy, and continues loading shortly afterward.
+- 📝 In the Markdown editor, Backspace and Shift-Tab remove the numbering from an empty list item or from an unnumbered paragraph inside a list.
+- 🔵 The Tasks chip in conversation view turns cyan, the color the session tree uses for background work, while background tasks are still running, and running tasks in the Tasks list are shown in cyan with a Running label.
+- 🗑️ Deleting a session no longer offers to remove git worktrees; use Delete worktree… to remove one.
+- 🔁 Translation status updates when it changes instead of every 10 seconds, and translation settings check installed agents again each time they open.
+- 💤 The Info panel pauses process resource sampling while the window is hidden.
+- ⏱️ The working indicator and turn timer in conversation view no longer go missing or linger when a turn starts or ends while you switch sessions.
+- 🔗 `vrefer` numbers messages the same way as `vsearch`, and `vrefer` and global search include the parent conversation's history for forked Codex sessions.
 
 ## v0.2.11 — 2026-10-18
 

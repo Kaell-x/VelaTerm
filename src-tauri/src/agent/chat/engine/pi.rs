@@ -481,7 +481,7 @@ fn current_tool(proc: &Arc<ChatProcess>, event: &Value) -> Option<String> {
 
 fn tool_args(proc: &Arc<ChatProcess>, id: &str, delta: &str) -> String {
     let mut state = proc.pi.lock().unwrap();
-    super::runtime::append(proc,&mut state.args,id,delta)
+    let _=proc;let buffer=state.args.entry(id.into()).or_default();buffer.push_str(delta);buffer.clone()
 }
 
 fn tool_name(proc: &ChatProcess, id: &str, explicit: Option<&str>) -> String {

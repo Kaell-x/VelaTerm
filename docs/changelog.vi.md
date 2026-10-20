@@ -1,3 +1,26 @@
+## v0.2.12 — 2026-10-20
+
+- 🛑 Dừng một lượt của Claude trong chế độ hội thoại có hiệu lực ngay, và tin nhắn tiếp theo được gửi đi luôn, kể cả khi máy tính đang tải nặng.
+- 🪟 Phím tắt menu như Cmd+D và thao tác nhấn vào thông báo chỉ tác động đến cửa sổ tương ứng, nên cửa sổ từ xa không còn bị chia cùng cửa sổ chính.
+- 🔎 Tìm kiếm toàn cục trả về kết quả ngay cả khi việc lập chỉ mục chưa xong và cho biết còn bao nhiêu phiên đang được lập chỉ mục.
+- ⚡ Tìm kiếm toàn cục lập chỉ mục các cuộc hội thoại Claude, Codex, Pi và OMP trực tiếp từ tệp, nhanh hơn nhiều và không còn chiếm bộ nhớ đệm lịch sử hội thoại; mở một kết quả sẽ đưa bạn đến đúng tin nhắn đó.
+- 🧠 Lịch sử hội thoại được đọc trực tiếp từ bản ghi gốc của tác nhân thay vì một bản sao riêng trên đĩa, và các thư mục `chat-index`, `chat-spool` được xóa khi khởi động để giải phóng dung lượng đĩa.
+- 📱 Trên điện thoại, các phiên chạy ở chế độ terminal gợi ý chuyển sang chế độ hội thoại; sau khi bạn xác nhận, ứng dụng máy tính cũng chuyển phiên đó.
+- 👀 Kết nối chia sẻ liệt kê các phiên chạy ở chế độ terminal ở dạng chỉ đọc, và chỉ chủ sở hữu máy chủ mới có thể chuyển chúng sang chế độ hội thoại.
+- 🌐 Cài đặt dịch có thêm tùy chọn “Bật dịch theo mặc định”, quyết định trạng thái dịch ban đầu của các phiên chưa lưu lựa chọn.
+- 🌳 Cây phiên gom các phiên dùng cùng một worktree vào dưới một hàng worktree.
+- 📄 Các câu trả lời ngắn trong chế độ hội thoại, kể cả tin nhắn có hình ảnh, không còn hiện liên kết “Đọc toàn bộ nội dung”.
+- 🔕 Nút xóa tất cả huy hiệu thông báo được chuyển sang đầu bên trái thanh dưới cùng của cây phiên.
+- 🤖 Hộp thoại tạo phiên mới và tiếp tục phiên hiển thị biểu tượng của từng tác nhân trong danh sách loại tác nhân, và danh sách quyền mở lên trên khi phía dưới không đủ chỗ.
+- 🩹 Chế độ hội thoại không còn báo lịch sử có bản ghi bị lỗi khi bộ nhớ lưu trữ đang bận, và sẽ tiếp tục tải ngay sau đó.
+- 📝 Trong trình soạn thảo Markdown, Backspace và Shift+Tab bỏ đánh số của một mục danh sách trống hoặc của đoạn văn không đánh số nằm trong danh sách.
+- 🔵 Chip “Tác vụ” trong chế độ hội thoại chuyển sang màu lục lam, màu mà cây phiên dùng cho công việc chạy nền, khi vẫn còn tác vụ nền đang chạy; trong danh sách tác vụ, các tác vụ đang chạy cũng hiện màu lục lam kèm nhãn “Đang chạy”.
+- 🗑️ Khi xóa một phiên, ứng dụng không còn đề nghị xóa các git worktree; để xóa worktree, hãy dùng “Xóa worktree…”.
+- 🔁 Trạng thái dịch được cập nhật khi có thay đổi thay vì mỗi 10 giây, và cài đặt dịch kiểm tra lại các tác nhân đã cài đặt mỗi lần được mở.
+- 💤 Bảng Info tạm dừng lấy mẫu tài nguyên tiến trình khi cửa sổ đang ẩn.
+- ⏱️ Chỉ báo đang làm việc và bộ đếm thời gian của lượt trong chế độ hội thoại không còn biến mất hoặc còn sót lại khi một lượt bắt đầu hay kết thúc trong lúc bạn chuyển phiên.
+- 🔗 `vrefer` đánh số tin nhắn giống `vsearch`, và với các phiên Codex được rẽ nhánh, `vrefer` cùng tìm kiếm toàn cục đều bao gồm lịch sử của cuộc hội thoại gốc.
+
 ## v0.2.11 — 2026-10-18
 
 - 🧪 Bản xem trước HTML thử nghiệm mở cạnh cuộc hội thoại hoặc trong thẻ, cập nhật khi tệp thay đổi và có thao tác với mã nguồn, bảng điều khiển và phiên bản; việc nghiệm thu trên ứng dụng gốc và các nền tảng vẫn chưa hoàn tất.

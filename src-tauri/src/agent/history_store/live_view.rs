@@ -72,6 +72,11 @@ fn facts(value:&mut Value,page:&Value) {
     for key in ["coverage","indexing","indexedBytes","sourceBytes","historyError","pendingLocation"] {
         if let Some(fact)=page.get(key) {value[key]=fact.clone();}
     }
+    // Messages recorded before the launch come first on the rail, then those of the running process.
+    if let Some(history)=page["userMessages"].as_array() {
+        let mut messages=history.clone();messages.extend(value["userMessages"].as_array().cloned().unwrap_or_default());
+        value["userMessages"]=Value::Array(messages);
+    }
 }
 
 /// Fold history into a running conversation's snapshot. `live` is the timeline window the engine

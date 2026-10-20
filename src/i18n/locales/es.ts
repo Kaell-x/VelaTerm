@@ -22,6 +22,8 @@ const es: typeof en = {
   "translation.title": "Traducción",
   "translation.enable": "Activar traducción",
   "translation.visibility": "Los controles de traducción aparecen en las conversaciones cuando esta función está activada.",
+  "translation.defaultEnabled": "Activar la traducción de forma predeterminada",
+  "translation.defaultEnabledHint": "Se aplica a las conversaciones sin preferencias de traducción guardadas. Los cambios se guardan automáticamente.",
   "translation.conversationKinds": "Tipos de agente de las conversaciones",
   "translation.conversationKindsHint": "Los controles de traducción y la traducción automática solo se aplican a las conversaciones con los tipos de agente seleccionados. Los cambios se guardan automáticamente.",
   "translation.chooseConversationKinds": "Seleccionar tipos de agente",
@@ -1252,8 +1254,6 @@ const es: typeof en = {
     `¿Eliminar el grupo «${name}»? También se eliminarán todos sus subgrupos y sesiones. Esta acción no se puede deshacer.`, // Delete group "{name}"?…
   "tree.deleteSessionBody": (name) =>
     `¿Eliminar la sesión «${name}» (y todas sus sesiones hijas)? Esta acción no se puede deshacer.`, // Delete session "{name}"…
-  "tree.deleteWorktrees": (n) =>
-    `Eliminar también los worktrees de git asociados (${n} en total; puede fallar si el árbol de trabajo tiene cambios)`, // Also remove associated git worktrees…
 
   // Session information dialog
   "info.name": "Nombre", // Name
@@ -1359,6 +1359,8 @@ const es: typeof en = {
   "search.archivedBadge": "Archivada", // Archived
   "search.summary": (m, s) =>
     `${m} ${m === 1 ? "coincidencia" : "coincidencias"} · ${s} ${s === 1 ? "sesión" : "sesiones"}`, // X matches · N sessions
+  "search.pending": (n) =>
+    n === 1 ? "Aún se está indexando 1 sesión, así que puede que los resultados no estén completos." : `Aún se están indexando ${n} sesiones, así que puede que los resultados no estén completos.`, // N sessions are still being indexed, so results may be incomplete
   "search.matchPosition": (n, total) => `${n} de ${total}`, // N of M
   "search.roleTerminal": "Terminal", // Terminal
   "search.collapseGroup": "Contraer", // Collapse
@@ -1768,6 +1770,10 @@ const es: typeof en = {
   "mobile.empty2":
     "Crea una en la aplicación de escritorio o en el navegador de un ordenador y aparecerá aquí automáticamente.", // Create one on the desktop app or a computer browser…
   "mobile.back": "‹ Atrás", // ‹ Back
+  "mobile.tuiSuggest": "Esta sesión se ejecuta en la vista de terminal. En el teléfono, la vista de conversación resulta más cómoda.", // This session runs in terminal view. Conversation view works better on a phone.
+  "mobile.tuiShareReadOnly": "Esta sesión se ejecuta en la vista de terminal, así que aquí puedes leerla pero no responder. Cambia a la vista de conversación para continuar.", // This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.
+  "mobile.tuiShareHost": "Esta sesión se ejecuta en la vista de terminal, así que aquí puedes leerla pero no responder. El propietario del equipo puede cambiarla a la vista de conversación.", // This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.
+  "mobile.switchToConversation": "Cambiar a la vista de conversación", // Switch to conversation view
   "mobile.selCopy": "Copiar", // Copy
   "mobile.selCancel": "Cancelar", // Cancel
 
@@ -1989,6 +1995,8 @@ const es: typeof en = {
   "session.switchBody": "El turno en curso se interrumpirá. La conversación se conserva.",
   "session.switchBodyBackground": "Las tareas en segundo plano que inició el agente pueden detenerse, y el agente no sabrá cuándo terminan. La conversación se conserva.",
   "session.switchConfirm": "Cambiar",
+  "session.switchBodyIdle": "El agente de la terminal se detendrá y continuará en la vista de conversación. La conversación se conserva.", // The agent in the terminal stops and continues in conversation view. Your conversation is kept.
+  "session.switchDesktopNote": "La aplicación de escritorio también mostrará esta sesión en la vista de conversación.", // The desktop app will also show this session in conversation view.
   "session.terminalViewHint": "Haga clic aquí para volver a la vista de terminal.",
   "session.loading": "Leyendo la conversación…",
   "session.unavailable": "Esta conversación aún no se puede leer",

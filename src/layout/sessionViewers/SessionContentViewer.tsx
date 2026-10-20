@@ -37,6 +37,8 @@ interface SessionContentProps {
   initialQuery?: string;
   highlightTerms?: string[];
   scrollToMessageIndex?: number;
+  /** Byte offset of the hit's first record, for paged conversations. */
+  scrollToRecordOffset?: number;
   scrollToRowId?: string;
   scrollToOrdinal?: number;
   /** Search caches failures as empty arrays; Kiro rechecks them to retain the backend reason. */
@@ -46,7 +48,8 @@ interface SessionContentProps {
 export function SessionContentViewer(props: SessionContentProps) {
   const { session, source, preloadedMessages } = props;
   if (source === "recording" || hasNoTranscript(session.kind)) return <RecordingContent {...props} />;
-  if (hasPagedHistory(session)) return <PagedConversation session={session} messageIndex={props.scrollToRowId ? undefined : props.scrollToMessageIndex} rowId={props.scrollToRowId} />;
+  if (hasPagedHistory(session)) return <PagedConversation session={session} messageIndex={props.scrollToRowId ? undefined : props.scrollToMessageIndex}
+    recordOffset={props.scrollToRowId ? undefined : props.scrollToRecordOffset} rowId={props.scrollToRowId} />;
   if (preloadedMessages !== undefined) {
     if (preloadedMessages.length > 0) return <TranscriptViewer {...props} messages={preloadedMessages} />;
     if (session.kind !== "kiro") return <RecordingContent {...props} />;

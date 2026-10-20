@@ -25,14 +25,14 @@ fn message(session:&str,proc:&ChatProcess,client:&str,text:&str,images:&[ChatIma
     let native=register(session,proc,client,None)?;let mut message=protocol::user_message(text,images);message["uuid"]=json!(native);Ok(message)
 }
 
-pub(super) fn observe(app:&AppCtx,session:&str,proc:&Arc<ChatProcess>,value:&Value) {
+pub(super) fn observe(proc:&Arc<ChatProcess>,value:&Value) {
     if value["type"]!="user" || !value["parent_tool_use_id"].is_null() {return;}
     let Some(native)=value["uuid"].as_str().filter(|id|uuid::Uuid::parse_str(id).is_ok()) else {return;};
     if value["session_id"].as_str().is_some_and(|id|proc.agent_session_id.lock().unwrap().as_deref().is_some_and(|native|native!=id)) {return;}
     let Some(client)=proc.claude_user_ids.lock().unwrap().remove(native) else {return;};
     proc.user_targets.lock().unwrap().insert(client.clone(),super::super::history::RewindTarget {
         message_id:native.into(),last_message_id:None,turn_id:None,text:String::new(),
-    });bounded::identity(app,session,proc,&client,native,"");
+    });
 }
 
 #[cfg(test)]
@@ -46,11 +46,11 @@ mod tests {
         assert_ne!(first["uuid"],second["uuid"]);assert_eq!(first,message("s",&proc,"first","Identical prompt",&[]).unwrap());
         assert!(proc.user_targets.lock().unwrap().is_empty());
         for (client,input) in [("first",first),("second",second)] {
-            let mut acknowledgement=input.clone();acknowledgement["session_id"]=json!("foreign");observe(&app,"s",&proc,&acknowledgement);
+            let mut acknowledgement=input.clone();acknowledgement["session_id"]=json!("foreign");observe(&proc,&acknowledgement);
             assert!(!proc.user_targets.lock().unwrap().contains_key(client));
-            acknowledgement["session_id"]=json!("thread");acknowledgement["parent_tool_use_id"]=json!("child");observe(&app,"s",&proc,&acknowledgement);
+            acknowledgement["session_id"]=json!("thread");acknowledgement["parent_tool_use_id"]=json!("child");observe(&proc,&acknowledgement);
             assert!(!proc.user_targets.lock().unwrap().contains_key(client));
-            acknowledgement["parent_tool_use_id"]=Value::Null;observe(&app,"s",&proc,&acknowledgement);observe(&app,"s",&proc,&acknowledgement);
+            acknowledgement["parent_tool_use_id"]=Value::Null;observe(&proc,&acknowledgement);observe(&proc,&acknowledgement);
             assert_eq!(proc.user_targets.lock().unwrap()[client].message_id,input["uuid"].as_str().unwrap());
         }
         assert!(proc.claude_user_ids.lock().unwrap().is_empty());

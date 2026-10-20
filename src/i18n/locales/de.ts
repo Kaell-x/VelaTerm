@@ -22,6 +22,8 @@ const de: typeof en = {
   "translation.title": "Übersetzung",
   "translation.enable": "Übersetzung aktivieren",
   "translation.visibility": "Die Übersetzungsfunktionen erscheinen in Gesprächen, sobald diese Funktion aktiviert ist.",
+  "translation.defaultEnabled": "Übersetzung standardmäßig aktivieren",
+  "translation.defaultEnabledHint": "Gilt für Gespräche ohne gespeicherte Übersetzungseinstellungen. Änderungen werden automatisch gespeichert.",
   "translation.conversationKinds": "Agententypen für Gespräche",
   "translation.conversationKindsHint": "Übersetzungsfunktionen und automatische Übersetzung sind nur in Gesprächen mit den ausgewählten Agententypen verfügbar. Änderungen werden automatisch gespeichert.",
   "translation.chooseConversationKinds": "Agententypen auswählen",
@@ -1249,8 +1251,6 @@ const de: typeof en = {
     `Gruppe „${name}“ löschen? Alle Untergruppen und Sitzungen werden ebenfalls gelöscht. Dies kann nicht rückgängig gemacht werden.`, // Delete group "{name}"?…
   "tree.deleteSessionBody": (name) =>
     `Sitzung „${name}“ (und alle Untersitzungen) löschen? Dies kann nicht rückgängig gemacht werden.`, // Delete session "{name}"…
-  "tree.deleteWorktrees": (n) =>
-    `Zugehörige Git-Worktrees mitlöschen (${n} insgesamt; bei Änderungen im Arbeitsbaum kann das Löschen fehlschlagen)`, // Also remove associated git worktrees…
 
   // Session information dialog
   "info.name": "Name", // Name
@@ -1299,9 +1299,9 @@ const de: typeof en = {
     "Dieses Projekt hat keinen nutzbaren Git-Repository-Pfad.", // This project has no usable git repository path.
   // ── Worktree selector for custom session creation ──
   "worktreeSel.label": "Worktree",
-  "worktreeSel.modeNone": "Keiner", // None
-  "worktreeSel.modeNew": "Neu", // New
-  "worktreeSel.modeExisting": "Vorhanden", // Existing
+  "worktreeSel.modeNone": "Ohne", // None
+  "worktreeSel.modeNew": "Neuer", // New
+  "worktreeSel.modeExisting": "Vorhandener", // Existing
   "worktreeSel.loading": "Worktrees werden geladen…", // Loading worktrees…
   "worktreeSel.empty": "Keine vorhandenen Worktrees in diesem Repository.", // No existing worktrees in this repository.
   "worktreeSel.loadFailed":
@@ -1356,6 +1356,8 @@ const de: typeof en = {
   "search.archivedBadge": "Archiviert", // Archived
   "search.summary": (m, s) =>
     `${m} Treffer · ${s} ${s === 1 ? "Sitzung" : "Sitzungen"}`, // X matches · N sessions
+  "search.pending": (n) =>
+    n === 1 ? "1 Sitzung wird noch indexiert; die Ergebnisse sind möglicherweise unvollständig." : `${n} Sitzungen werden noch indexiert; die Ergebnisse sind möglicherweise unvollständig.`, // N sessions are still being indexed, so results may be incomplete
   "search.matchPosition": (n, total) => `${n} von ${total}`, // N of M
   "search.roleTerminal": "Terminal", // Terminal
   "search.collapseGroup": "Einklappen", // Collapse
@@ -1760,6 +1762,10 @@ const de: typeof en = {
   "mobile.empty2":
     "Erstellen Sie eine Sitzung in der Desktop-App oder im Browser auf einem Computer. Sie erscheint hier automatisch.", // Create one on the desktop app or a computer browser…
   "mobile.back": "‹ Zurück", // ‹ Back
+  "mobile.tuiSuggest": "Diese Sitzung läuft in der Terminalansicht. Auf dem Smartphone ist die Gesprächsansicht besser geeignet.", // This session runs in terminal view. Conversation view works better on a phone.
+  "mobile.tuiShareReadOnly": "Diese Sitzung läuft in der Terminalansicht. Sie können sie hier lesen, aber nicht antworten. Wechseln Sie zur Gesprächsansicht, um fortzufahren.", // This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.
+  "mobile.tuiShareHost": "Diese Sitzung läuft in der Terminalansicht. Sie können sie hier lesen, aber nicht antworten. Der Besitzer des Hosts kann sie auf die Gesprächsansicht umstellen.", // This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.
+  "mobile.switchToConversation": "Zur Gesprächsansicht wechseln", // Switch to conversation view
   "mobile.selCopy": "Kopieren", // Copy
   "mobile.selCancel": "Abbrechen", // Cancel
 
@@ -1981,6 +1987,8 @@ const de: typeof en = {
   "session.switchBody": "Der laufende Zug wird abgebrochen. Das Gespräch bleibt erhalten.",
   "session.switchBodyBackground": "Vom Agenten gestartete Hintergrundaufgaben werden möglicherweise beendet, und der Agent erfährt nicht, wann sie fertig sind. Das Gespräch bleibt erhalten.",
   "session.switchConfirm": "Wechseln",
+  "session.switchBodyIdle": "Der Agent im Terminal wird beendet und in der Gesprächsansicht fortgesetzt. Das Gespräch bleibt erhalten.", // The agent in the terminal stops and continues in conversation view. Your conversation is kept.
+  "session.switchDesktopNote": "Auch in der Desktop-App wird diese Sitzung dann in der Gesprächsansicht angezeigt.", // The desktop app will also show this session in conversation view.
   "session.terminalViewHint": "Klicken Sie hier, um zur Terminalansicht zurückzukehren.",
   "session.loading": "Gespräch wird gelesen…",
   "session.unavailable": "Dieses Gespräch lässt sich noch nicht lesen",

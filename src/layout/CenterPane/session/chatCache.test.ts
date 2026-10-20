@@ -58,6 +58,23 @@ it("keeps a newer authorization event over a late snapshot and clears it on proc
   expect(reconcileChat(updated, [], [{ type: "reset", epoch: 200, rows: [], revision: 0 }]).auth).toBeUndefined();
 });
 
+it("keeps the turn clock from events newer than a late snapshot", () => {
+  const idle = { running: true, rows: [], queue: [], permissions: [], commands: [], configKeys: [], startedAt: 100 };
+  expect(reconcileChat(idle, [], [{ type: "turnStarted", startedAt: 500 }]).turnStartedAt).toBe(500);
+  const busy = { ...idle, turnStartedAt: 500 };
+  expect(reconcileChat(busy, [], [{ type: "turnCompleted" }]).turnStartedAt).toBeUndefined();
+  expect(reconcileChat(busy, [], [{ type: "turnCompleted" }, { type: "turnStarted", startedAt: 900 }]).turnStartedAt).toBe(900);
+  const exited = reconcileChat(busy, [], [{ type: "exited", code: 0, stderr: "" }]);
+  expect(exited.running).toBe(false);
+  expect(exited.turnStartedAt).toBeUndefined();
+  // The first message starts the process after a snapshot that found none.
+  const started = reconcileChat({ ...idle, running: false }, [], [
+    { type: "process", pid: 42, startedAt: 100 },
+    { type: "turnStarted", startedAt: 600 },
+  ]);
+  expect(started).toMatchObject({ running: true, pid: 42, turnStartedAt: 600 });
+});
+
 it("evicts by owned bytes and keeps smaller snapshots available", () => {
   clearChatCache();
   const snapshot = (text: string) => ({ rows: [{ kind: "user", id: text.length.toString(), text }], queue: [] }) as unknown as ChatSnapshot;

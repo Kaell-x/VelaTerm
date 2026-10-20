@@ -1006,7 +1006,8 @@ fn dispatch_inner(app: &AppCtx, cmd: &str, args: &Value, source: &str, origin: C
             }
             let prefer=args.get("preferBounded").and_then(Value::as_bool)==Some(true);
             let history_only=args.get("historyOnly").and_then(Value::as_bool)==Some(true);
-            if !history_only && args.get("messageIndex").is_none() && crate::agent::history_store::children::path(args)?.is_empty() {
+            let located=args.get("messageIndex").is_some() || args.get("recordOffset").is_some();
+            if !history_only && !located && crate::agent::history_store::children::path(args)?.is_empty() {
                 if let Some(live)=app.chat().paged_history(&sid) {
                     // Earlier rows are history pages in front of this process's timeline. The timeline part
                     // is a whole window rather than a delta, so the merged rows replace the client's copy.
@@ -1030,14 +1031,26 @@ fn dispatch_inner(app: &AppCtx, cmd: &str, args: &Value, source: &str, origin: C
                         if args.get("historyGeneration").and_then(Value::as_str).is_some_and(|g|g!=branch.generation) {
                             return Err("cursor_expired: history generation changed".into());
                         }
-                        let mut page=if let Some(index)=args.get("messageIndex").and_then(Value::as_u64) {
+                        let index=args.get("messageIndex").and_then(Value::as_u64);
+                        let offset=args.get("recordOffset").and_then(Value::as_u64);
+                        let mut page=if index.is_some() || offset.is_some() {
                             let mut status=branch.page(None,None,None)?;
                             if status["indexing"]==true {
-                                status["pendingLocation"]=serde_json::json!({"messageIndex":index});status["rows"]=serde_json::json!([]);status["positions"]=serde_json::json!({});status
+                                let mut location=serde_json::Map::new();
+                                if let Some(index)=index {location.insert("messageIndex".into(),serde_json::json!(index));}
+                                if let Some(offset)=offset {location.insert("recordOffset".into(),serde_json::json!(offset));}
+                                status["pendingLocation"]=Value::Object(location);status["rows"]=serde_json::json!([]);status["positions"]=serde_json::json!({});status
                             } else {
-                                if status["coverage"]=="error" {return Err("index_incomplete: cannot confirm this message number".into());}
-                                let prose=crate::agent::history_store::prose::Prose::new(branch.clone(),&std::sync::atomic::AtomicBool::new(false))?;
-                                let row=prose.row_id(index)?.ok_or("cursor_expired: transcript message is outside the current branch")?;
+                                // A search hit read from the recording locates its record directly; the message
+                                // number is the fallback for hits indexed without an offset.
+                                let mut row=match offset {Some(offset)=>branch.row_at_record(offset)?,None=>None};
+                                if row.is_none() {
+                                    let Some(index)=index else {return Err("cursor_expired: transcript message is outside the current branch".into());};
+                                    if status["coverage"]=="error" {return Err("index_incomplete: cannot confirm this message number".into());}
+                                    let prose=crate::agent::history_store::prose::Prose::new(branch.clone(),&std::sync::atomic::AtomicBool::new(false))?;
+                                    row=prose.row_id(index)?;
+                                }
+                                let row=row.ok_or("cursor_expired: transcript message is outside the current branch")?;
                                 let mut page=branch.page(None,None,Some(&row))?;page["locatedRowId"]=serde_json::json!(row);page
                             }
                         } else {branch.page(window.as_ref().and_then(|w|w.before.as_deref()),opt_str(args,"after").as_deref(),opt_str(args,"anchor").as_deref())?};

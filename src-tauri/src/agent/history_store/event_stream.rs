@@ -1,75 +1,75 @@
 //! Fixed-watermark event iteration for full-content tasks. Bodies remain verified field streams.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet,HashMap,HashSet,VecDeque};
 use std::io::Write;
 use std::sync::atomic::{AtomicBool,Ordering};
 
-use rusqlite::{params,OptionalExtension};
 use serde_json::Value;
 
 use crate::{agent::export::{self,Event},host::AppCtx,models::SessionKind};
-use super::{api::{self,Branch},projection::{Field,Record},store::{sql,RegisteredSource}};
+use super::{adapter::Refs,api::{self,Branch},projection::Record,store::{FieldMeta,RegisteredSource,State}};
 
 pub fn complete(app:&AppCtx,session:&str,cancel:&AtomicBool) -> Result<Branch,String> {
     wait(api::prepare(app,session)?,cancel)
 }
+
+/// Wait until every source of `branch` is indexed up to its size at the time of the call. An append
+/// never silently extends an export.
 pub fn wait(mut branch:Branch,cancel:&AtomicBool) -> Result<Branch,String> {
-    let session=branch.scope.clone();let session=session.as_str();
+    let session=branch.scope.clone();
     if let Some(error)=&branch.error {return Err(error.clone());}
-    // Fix the physical boundary before waiting. An append never silently extends an export.
     for source in &mut branch.sources {source.segment.end_byte=Some(source.segment.end_byte.unwrap_or(source.size));}
-    let reader=branch.store.subscribe(session,&branch.sources,None)?;
-    let mut observed=std::collections::HashSet::new();
+    let reader=branch.store.subscribe(&session,&branch.sources,None)?;
+    let mut observed=HashSet::new();
     let mut refreshed=std::time::Instant::now();
     let result=(|| {
         loop {
             if cancel.load(Ordering::Relaxed) {return Err("read_canceled".into());}
             if refreshed.elapsed()>=std::time::Duration::from_secs(60) {
-                branch.store.subscribe(session,&branch.sources,Some(&reader))?;refreshed=std::time::Instant::now();
+                branch.store.subscribe(&session,&branch.sources,Some(&reader))?;refreshed=std::time::Instant::now();
             }
-            let conn=branch.store.connect()?;let mut done=true;
-            for source in &mut branch.sources {
-                let (generation,water,status,error):(String,u64,String,Option<String>)=conn.query_row(
-                    "SELECT generation,indexed_bytes,status,error FROM sources WHERE id=?1",[&source.id],
-                    |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql)?;
-                if generation!=source.generation {return Err("source_changed: history generation changed while preparing the export".into());}
+            let mut done=true;
+            for index in 0..branch.sources.len() {
+                let source=branch.sources[index].clone();
+                let (water,status,error,scanning)={
+                    let state=source.index.read();
+                    if state.generation!=source.generation || state.stale {return Err("source_changed: history generation changed while preparing the export".into());}
+                    (state.indexed,state.status.clone(),state.error.clone(),source.index.scanning())
+                };
                 if status=="error" {return Err(error.unwrap_or_else(||"index_incomplete: conversation contains unreadable records".into()));}
-                if water<source.segment.end_byte.unwrap() || source.kiro_pair.is_some() && status!="complete" {
+                if water<source.segment.end_byte.unwrap() {
                     done=false;
-                    let key=format!("{}:{}",source.id,source.generation);
-                    if branch.store.jobs.lock().unwrap().contains_key(&key) {observed.insert(key);}
-                    else {
-                        if observed.contains(&key) {
-                            // A durable watermark excludes the unfinished tail and stops at a native
-                            // ordinal cutoff. Neither is a malformed middle-record gap.
-                            if source.segment.end_ordinal.is_none() {
-                                return Err("index_incomplete: conversation ends with an unfinished record; retry after it has been saved".into());
-                            }
-                            source.segment.end_byte=Some(water);continue;
+                    if scanning {observed.insert(source.id.clone());continue;}
+                    if observed.contains(&source.id) {
+                        // A durable watermark excludes the unfinished tail and stops at a native ordinal
+                        // cutoff. Neither is a malformed middle-record gap.
+                        if source.segment.end_ordinal.is_none() {
+                            return Err("index_incomplete: conversation ends with an unfinished record; retry after it has been saved".into());
                         }
-                        branch.store.schedule(branch.kind,source.clone());
-                        if branch.store.jobs.lock().unwrap().contains_key(&key) {observed.insert(key);}
+                        branch.sources[index].segment.end_byte=Some(water);continue;
                     }
-                } else if branch.store.jobs.lock().unwrap().contains_key(&format!("{}:{}",source.id,source.generation)) {
+                    branch.store.schedule(branch.kind,source.clone());
+                    if source.index.scanning() {observed.insert(source.id.clone());}
+                } else if scanning {
                     // The watermark reaches the end before the scan selects the active branch.
                     done=false;
                 }
             }
             if done {return Ok(branch.clone());}
-            std::thread::park_timeout(std::time::Duration::from_millis(100));
+            std::thread::park_timeout(std::time::Duration::from_millis(50));
         }
     })();
-    branch.store.cancel_reader(session,&reader)?;result
+    branch.store.cancel_reader(&session,&reader)?;result
 }
 
 #[derive(Clone)]
-pub enum Piece {Literal(String),Field(RegisteredSource,String),NativeUser(RegisteredSource,String),VerifiedLiteral(RegisteredSource,Vec<String>,String)}
+pub enum Piece {Literal(String),Field(RegisteredSource,FieldMeta),NativeUser(RegisteredSource,String),VerifiedLiteral(RegisteredSource,Vec<FieldMeta>,String)}
 #[derive(Clone)]
 pub struct Text {pub pieces:Vec<Piece>,pub quote_json:bool,pub separator:&'static str}
 impl Text {
     pub(crate) fn literal(value:String) -> Self {Self {pieces:vec![Piece::Literal(value)],quote_json:false,separator:"\n"}}
 
-    pub fn walk(&self,branch:&Branch,cancel:&AtomicBool,sink:&mut impl FnMut(&str)->Result<(),String>) -> Result<(),String> {
+    pub fn walk(&self,_branch:&Branch,cancel:&AtomicBool,sink:&mut impl FnMut(&str)->Result<(),String>) -> Result<(),String> {
         if self.quote_json {sink("\"")?;}
         for (index,piece) in self.pieces.iter().enumerate() {
             if index>0 {sink(self.separator)?;}
@@ -79,22 +79,13 @@ impl Text {
             };
             match piece {
                 Piece::Literal(text)=>emit(text)?,
-                Piece::NativeUser(source,message)=>super::native_database::walk_user(branch,source,message,cancel,&mut emit)?,
-                Piece::VerifiedLiteral(source,references,text)=> {
-                    let conn=branch.store.connect()?;
-                    for reference in references {let mut sequence=0;loop {
-                        if cancel.load(Ordering::Relaxed) {return Err("read_canceled".into());}
-                        let (_,_,end,size)=api::read_piece(&conn,source,reference,sequence,0)?;
-                        if end>=size {break;}sequence+=1;
-                    }}emit(text)?;
+                Piece::NativeUser(source,message)=>super::opencode::walk_user(source,message,cancel,&mut emit)?,
+                Piece::VerifiedLiteral(source,fields,text)=> {
+                    // Short transformed text is cached, but the bytes it came from are still verified.
+                    for field in fields {super::fields::walk(source,field,cancel,&mut |_|Ok(()))?;}
+                    emit(text)?;
                 },
-                Piece::Field(source,reference)=> {
-                    let conn=branch.store.connect()?;let mut sequence=0;
-                    loop {
-                        let (text,_,end,size)=api::read_piece(&conn,source,reference,sequence,0)?;emit(&text)?;
-                        if end>=size {break;}sequence+=1;
-                    }
-                }
+                Piece::Field(source,field)=>super::fields::walk(source,field,cancel,&mut emit)?,
             }
         }
         if self.quote_json {sink("\"")?;}Ok(())
@@ -125,79 +116,91 @@ impl Text {
 }
 
 pub struct StreamEvent {pub event:Event,pub body:Text,pub(crate) row_id:Option<String>}
-pub(crate) struct IndexedRecord {pub source:RegisteredSource,pub record:Record,pub references:std::collections::HashMap<String,String>}
-pub struct Cursor {pub branch:Branch,pub(crate) conn:rusqlite::Connection,source:usize,after:Option<u64>,pending:VecDeque<StreamEvent>}
-impl Cursor {
-    pub fn new(branch:Branch,cancel:&AtomicBool) -> Result<Self,String> {
-        let branch=super::reconciliation::native_context(&branch,cancel)?;
-        let conn=branch.store.connect()?;
-        for source in &branch.sources {
-            let current:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM sources WHERE id=?1 AND generation=?2)",params![source.id,source.generation],|r|r.get(0)).map_err(sql)?;
-            if !current {return Err("source_changed: original history generation is no longer current".into());}
-        }
-        conn.execute_batch("PRAGMA temp_store=FILE; BEGIN;
-            CREATE TEMP TABLE selected_records(source_id TEXT,generation TEXT,start INTEGER,PRIMARY KEY(source_id,generation,start));").map_err(sql)?;
-        for source in &branch.sources {
-            if matches!(branch.kind,SessionKind::Claude|SessionKind::Pi|SessionKind::Omp)
-                && !(branch.kind==SessionKind::Claude && branch.scope.starts_with("global-search:")) {
-                conn.execute("WITH RECURSIVE leaf(id) AS (SELECT CASE WHEN event_type='last-prompt' AND json_extract(projection,'$.rewound')=1
-                    THEN json_extract(projection,'$.leafUuid') ELSE native_id END FROM records WHERE source_id=?1 AND generation=?2 AND end<=?3
-                    AND (native_id IS NOT NULL OR (event_type='last-prompt' AND json_extract(projection,'$.rewound')=1)) ORDER BY start DESC LIMIT 1),
-                    chain(id) AS (SELECT id FROM leaf UNION SELECT r.parent_id FROM chain c CROSS JOIN records r ON r.native_id=c.id
-                        WHERE r.source_id=?1 AND r.generation=?2 AND r.end<=?3 AND r.parent_id IS NOT NULL)
-                    INSERT INTO selected_records SELECT source_id,generation,start FROM records WHERE source_id=?1 AND generation=?2 AND end<=?3
-                        AND (native_id IS NULL OR native_id IN (SELECT id FROM chain))",params![source.id,source.generation,source.segment.end_byte.unwrap_or(source.size)]).map_err(sql)?;
-            } else {
-                conn.execute("INSERT INTO selected_records SELECT source_id,generation,start FROM records WHERE source_id=?1 AND generation=?2
-                    AND end<=?3 AND active=1",params![source.id,source.generation,source.segment.end_byte.unwrap_or(source.size)]).map_err(sql)?;
+pub(crate) struct IndexedRecord {pub source:RegisteredSource,pub record:Record,pub references:Refs}
+
+/// Read a record again with the fields the scan gave it, nested argument documents included.
+pub(crate) fn read_record(source:&RegisteredSource,start:u64) -> Result<(Record,Refs),String> {
+    let mut checkpoints=Vec::new();
+    let mut record=super::store::reproject(source,start,&mut |piece| {if super::adapter::addressed(&piece.path) {checkpoints.push(piece);}Ok(())})?;
+    let bytes=source.virtual_bytes();
+    let scanned=super::adapter::Scanned {source,checkpoints:&checkpoints,bytes:bytes.as_ref()};
+    let mut refs=super::adapter::refs(source,&record);
+    if record.error.is_none() {super::adapter::expand_arguments(&scanned,&mut record,&mut refs)?;}
+    Ok((record,refs))
+}
+
+/// The records of one source a full read covers: the active branch of a tree recording as of the
+/// segment's end, or the active records of any other.
+fn selection(kind:SessionKind,state:&State,source:&RegisteredSource) -> BTreeSet<u64> {
+    let limit=source.segment.end_byte.unwrap_or(source.size);
+    let within=|record:&super::store::Rec|record.end<=limit;
+    if !matches!(kind,SessionKind::Claude|SessionKind::Pi|SessionKind::Omp) {
+        return state.records.iter().filter(|(_,record)|within(record) && record.active).map(|(start,_)|*start).collect();
+    }
+    let leaf=state.records.values().rev().filter(|record|within(record)).find(|record|record.native.is_some() || record.rewound)
+        .map(|record|if record.rewound {record.leaf.clone()} else {record.native.clone()});
+    let mut chain:HashSet<Box<str>>=HashSet::new();
+    if let Some(Some(leaf))=leaf {
+        let mut pending=vec![leaf];
+        while let Some(id)=pending.pop() {
+            if chain.len()>100_000 || !chain.insert(id.clone()) {continue;}
+            for start in state.identities.get(&id).into_iter().flatten() {
+                if let Some(record)=state.records.get(start).filter(|record|within(record)) {
+                    if let Some(parent)=state.parent_of(*start,record) {pending.push(parent);}
+                }
             }
         }
-        Ok(Self {branch,conn,source:0,after:None,pending:VecDeque::new()})
+    }
+    state.records.iter().filter(|(_,record)|within(record) && record.native.as_ref().is_none_or(|native|chain.contains(native)))
+        .map(|(start,_)|*start).collect()
+}
+
+pub struct Cursor {pub branch:Branch,pub(crate) selected:Vec<BTreeSet<u64>>,source:usize,after:Option<u64>,pending:VecDeque<StreamEvent>}
+impl Cursor {
+    pub fn new(branch:Branch,_cancel:&AtomicBool) -> Result<Self,String> {
+        super::children::validate_parent(&branch)?;
+        let mut selected=Vec::new();
+        for source in &branch.sources {
+            let state=source.current()?;selected.push(selection(branch.kind,&state,source));
+        }
+        Ok(Self {branch,selected,source:0,after:None,pending:VecDeque::new()})
     }
 
     pub fn rewind(&mut self) {self.source=0;self.after=None;self.pending.clear();}
-    /// Continue from the record of `source` that starts at `start`.
-    pub(crate) fn seek(&mut self,source:usize,start:u64) {self.source=source;self.after=start.checked_sub(1);self.pending.clear();}
-
+    /// Whether the record of `source` at `start` is part of this read.
+    pub(crate) fn contains(&self,source:usize,start:u64) -> bool {self.selected.get(source).is_some_and(|records|records.contains(&start))}
     pub(crate) fn next_record(&mut self,cancel:&AtomicBool) -> Result<Option<IndexedRecord>,String> {
         loop {
             if cancel.load(Ordering::Relaxed) {return Err("read_canceled".into());}
-            let Some(source)=self.branch.sources.get(self.source) else {return Ok(None);};
-            let conn=&self.conn;
-            // Seek the selection itself: an IN subquery is rebuilt as a temporary table on every call,
-            // which made reading a conversation quadratic in its record count.
-            let record:Option<(u64,u64,String,Option<String>)>=conn.query_row("SELECT r.start,r.end,r.projection,r.error FROM selected_records s
-                CROSS JOIN records r ON r.source_id=s.source_id AND r.generation=s.generation AND r.start=s.start
-                WHERE s.source_id=?1 AND s.generation=?2 AND s.start>?3
-                AND r.end<=?4 AND (?5 IS NULL OR r.ordinal IS NULL OR r.ordinal<?5) ORDER BY s.start LIMIT 1",
-                params![source.id,source.generation,self.after.map_or(-1,|start|start as i64),source.segment.end_byte.unwrap_or(source.size),source.segment.end_ordinal],
-                |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(sql)?;
-            let Some((start,end,raw,error))=record else {self.source+=1;self.after=None;continue;};
-            if let Some(error)=error {return Err(format!("index_incomplete: {error}"));}self.after=Some(start);
-            let value:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;
-            let mut fields=Vec::new();let mut references=std::collections::HashMap::new();
-            let mut statement=conn.prepare("SELECT ref,path,raw_start,raw_end,decoded_bytes,encoding FROM fields
-                WHERE source_id=?1 AND generation=?2 AND record_start=?3 ORDER BY raw_start,path").map_err(sql)?;
-            let found=statement.query_map(params![source.id,source.generation,start],|r|Ok((r.get::<_,String>(0)?,Field {
-                path:r.get(1)?,start:r.get(2)?,end:r.get(3)?,decoded_bytes:r.get(4)?,encoding:r.get(5)?,truncated:false,hash:None}))).map_err(sql)?;
-            for found in found {
-                let (reference,mut field)=found.map_err(sql)?;
-                field.truncated=field.decoded_bytes>super::limits::PREVIEW_BYTES as u64
-                    || field.encoding=="string" && value.pointer(&field.path).and_then(Value::as_str).is_none_or(|text|text.len() as u64!=field.decoded_bytes);
-                references.insert(field.path.clone(),reference);fields.push(field);
-            }
-            let record=Record {start,end,value,fields,error:None,complete:true};
-            // Semantic discriminators can be after a giant ignored payload. Verify
-            // their own original ranges rather than trusting cached classification.
-            for field in record.fields.iter().filter(|field|super::projection::identity_path(&field.path)) {
-                if field.decoded_bytes>super::limits::MAX_KEY_BYTES as u64 {return Err("unsupported_record: original history identity exceeds its metadata budget".into());}
-                let reference=references.get(&field.path).ok_or("index_incomplete: original history identity is unavailable")?;
-                let mut proof=api::DecodedFieldReader::new(conn,source,reference,0,None,0)?;let mut bytes=[0;4096];
-                loop {if cancel.load(Ordering::Relaxed) {return Err("read_canceled".into());}
-                    if std::io::Read::read(&mut proof,&mut bytes).map_err(|e|e.to_string())?==0 {break;}}
-            }
-            return Ok(Some(IndexedRecord {source:source.clone(),record,references}));
+            let Some(source)=self.branch.sources.get(self.source).cloned() else {return Ok(None);};
+            let from=self.after.map_or(0,|start|start+1);
+            let next=self.selected[self.source].range(from..).next().copied();
+            let Some(start)=next else {self.source+=1;self.after=None;continue;};
+            self.after=Some(start);
+            let (error,ordinal)={let state=source.current()?;let record=&state.records[&start];(record.error.clone(),record.ordinal)};
+            if source.segment.end_ordinal.is_some_and(|end|ordinal.is_some_and(|ordinal|ordinal>=end)) {continue;}
+            if let Some(error)=error {return Err(format!("index_incomplete: {error}"));}
+            let (record,references)=read_record(&source,start)?;
+            return Ok(Some(IndexedRecord {source,record,references}));
         }
+    }
+
+    /// The tool a result answers: the earliest selected call row with that id that names its tool.
+    fn tool_name(&self,call:&str) -> Option<String> {
+        for (index,candidate) in self.branch.sources[..=self.source.min(self.branch.sources.len()-1)].iter().enumerate().rev() {
+            let state=candidate.index.read();
+            let mut found:Option<(u64,String)>=None;
+            for row in state.calls.get(call).into_iter().flatten() {
+                for (start,part) in state.parts.get(row).into_iter().flatten() {
+                    if !self.contains(index,*start) || candidate.segment.end_ordinal.is_some_and(|end|part.ordinal.is_some_and(|ordinal|ordinal>=end)) {continue;}
+                    let Some(name)=serde_json::from_str::<Value>(&part.summary).ok().and_then(|value|value["name"].as_str().map(str::to_owned)) else {continue;};
+                    if name=="tool" {continue;}
+                    if found.as_ref().is_none_or(|(at,_)|*start<*at) {found=Some((*start,name));}
+                }
+            }
+            if let Some((_,name))=found {return Some(name);}
+        }
+        None
     }
 
     pub fn next(&mut self,cancel:&AtomicBool) -> Result<Option<StreamEvent>,String> {
@@ -205,11 +208,13 @@ impl Cursor {
             if cancel.load(Ordering::Relaxed) {return Err("read_canceled".into());}
             if let Some(event)=self.pending.pop_front() {return Ok(Some(event));}
             let Some(IndexedRecord {source,record,references})=self.next_record(cancel)? else {return Ok(None);};
-            let raw=record.value.to_string();let conn=&self.conn;
+            let raw=record.value.to_string();
             if self.branch.kind==SessionKind::Opencode && record.value["info"]["role"]=="user" {
                 if record.value["type"]!="opencode_message" {continue;}
                 let message=record.value["info"]["id"].as_str().ok_or("unsupported_record: native user identity is unavailable")?;
-                if let Some(text)=super::native_database::user_preview(conn,&source,message)? {
+                let bytes=super::opencode::bytes(&source)?;
+                let text={let state=source.current()?;super::opencode::user_preview(&state,&source,&bytes,message)?};
+                if let Some(text)=text {
                     let at=record.value.pointer("/info/time/created").and_then(Value::as_i64).and_then(crate::agent::chat::opencode_timeline::iso_from_ms);
                     let row_id=Some(format!("native:{}",super::store::digest(format!("opencode:{}:u:{message}",source.segment.native_id).as_bytes())));
                     return Ok(Some(StreamEvent {event:Event::User {text,ts:at},body:Text {pieces:vec![Piece::NativeUser(source,message.into())],quote_json:false,separator:"\n"},row_id}));
@@ -221,9 +226,6 @@ impl Cursor {
                 SessionKind::Kiro=>if record.value["type"]=="kiro_message" {
                     let text=record.value["text"].as_str().unwrap_or_default().into();let ts=record.value["timestamp"].as_str().map(str::to_owned);
                     vec![if record.value["role"]=="user" {Event::User {text,ts}} else {Event::AssistantText {text,ts}}]
-                } else if record.value["type"]=="kiro_pair" {
-                    vec![Event::User {text:record.value["prompt"].as_str().unwrap_or_default().into(),ts:record.value["timestamp"].as_str().map(str::to_owned)},
-                        Event::AssistantText {text:record.value["answer"].as_str().unwrap_or_default().into(),ts:None}]
                 } else {Vec::new()},
                 SessionKind::Opencode=> {
                     let message=crate::agent::opencode_store::OpencodeMessage {info:record.value["info"].clone(),
@@ -232,6 +234,7 @@ impl Cursor {
                 },
                 other=>return Err(format!("Streamed event adapter is unavailable for {} sessions",other.as_str())),
             };
+            let refs:HashMap<&str,&FieldMeta>=references.iter().map(|(path,(_,meta))|(path.as_str(),meta)).collect();
             for (local,mut event) in events.into_iter().enumerate() {
                 let (role,call,fallback,quote)=match &event {
                     Event::User {text,..}|Event::AssistantText {text,..}|Event::Command {text,..}=>("body",None,text.clone(),false),
@@ -245,33 +248,22 @@ impl Cursor {
                 let roots:Vec<String>=paths.iter().filter(|path|!paths.iter().any(|parent|*path!=parent && path.starts_with(&(parent.clone()+"/"))))
                     .cloned().collect();
                 let long=record.fields.iter().any(|field|roots.contains(&field.path) && field.truncated);
-                let mut body=Text {pieces:roots.iter().filter_map(|path|references.get(path).map(|reference|Piece::Field(source.clone(),reference.clone()))).collect(),quote_json:quote,separator:if self.branch.kind==SessionKind::Codex && role=="reasoning" {"\n\n"} else {"\n"}};
+                let fields=roots.iter().filter_map(|path|refs.get(path.as_str()).map(|meta|(*meta).clone())).collect::<Vec<_>>();
+                let mut body=Text {pieces:fields.iter().map(|meta|Piece::Field(source.clone(),meta.clone())).collect(),quote_json:quote,
+                    separator:if self.branch.kind==SessionKind::Codex && role=="reasoning" {"\n\n"} else {"\n"}};
                 if record.value["type"]=="kiro_message" {body.separator="";}
                 if body.pieces.is_empty() {body=Text::literal(fallback.clone());}
-                else if !long {
-                    body=Text {pieces:vec![Piece::VerifiedLiteral(source.clone(),roots.iter().filter_map(|path|references.get(path).cloned()).collect(),fallback.clone())],quote_json:false,separator:"\n"};
-                }
+                else if !long {body=Text {pieces:vec![Piece::VerifiedLiteral(source.clone(),fields,fallback.clone())],quote_json:false,separator:"\n"};}
                 // Local command echoes and shell wrappers are semantic transformations of short fields.
                 // Never substitute an untransformed original for one of those displayed values.
                 if matches!(event,Event::Command {..}|Event::Shell {..}) {
                     if long {return Err("unsupported_record: this transformed shell or command body requires a streaming adapter".into());}
                     body=Text::literal(fallback.clone());
                 }
-                if let Event::ToolResult {id:Some(id),name,..}=&mut event {
-                    for candidate in self.branch.sources[..=self.source].iter().rev() {
-                        *name=conn.query_row("SELECT json_extract(p.summary,'$.name') FROM row_parts p JOIN rows r
-                            ON r.source_id=p.source_id AND r.generation=p.generation AND r.id=p.row_id
-                            JOIN selected_records selected ON selected.source_id=p.source_id AND selected.generation=p.generation AND selected.start=p.record_start
-                            WHERE r.source_id=?1 AND r.generation=?2 AND r.call_id=?3 AND json_extract(p.summary,'$.name')!='tool'
-                            AND (?4 IS NULL OR p.ordinal IS NULL OR p.ordinal<?4) ORDER BY p.record_start LIMIT 1",
-                            params![candidate.id,candidate.generation,id.as_str(),candidate.segment.end_ordinal],|r|r.get(0)).optional().map_err(sql)?;
-                        if name.is_some() {break;}
-                    }
-                }
+                if let Event::ToolResult {id:Some(id),name,..}=&mut event {*name=self.tool_name(id);}
                 let row_id=if self.branch.kind==SessionKind::Kiro {
-                    record.value["id"].as_str().map(|id|format!("native:{}",super::store::digest(if record.value["type"]=="kiro_message" {
-                        format!("kiro-file:{}:{id}",source.segment.native_id)
-                    } else {format!("kiro:{}:{id}:{}",source.segment.native_id,if local==0 {"user"} else {"assistant"})}.as_bytes())))
+                    record.value["id"].as_str().map(|id|format!("native:{}",super::store::digest(format!("kiro:{}:{id}:{}",source.segment.native_id,
+                        if record.value["role"]=="user" {"user"} else {"assistant"}).as_bytes())))
                 } else if self.branch.kind==SessionKind::Opencode {
                     record.value.pointer("/part/id").and_then(Value::as_str).map(|id|format!("native:{}",super::store::digest(format!("opencode:{}:{id}",source.segment.native_id).as_bytes())))
                 } else {None};

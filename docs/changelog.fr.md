@@ -1,3 +1,26 @@
+## v0.2.12 — 2026-10-20
+
+- 🛑 L’arrêt d’un tour Claude dans la vue conversation prend effet immédiatement, et votre message suivant part aussitôt, même lorsque l’ordinateur est très sollicité.
+- 🪟 Les raccourcis de menu comme Cmd+D et les clics sur les notifications n’agissent que dans la fenêtre concernée : les fenêtres distantes ne se divisent plus en même temps que la fenêtre principale.
+- 🔎 La recherche globale renvoie des résultats pendant l’indexation et indique combien de sessions restent à indexer.
+- ⚡ La recherche globale indexe les conversations Claude, Codex, Pi et OMP directement depuis leurs fichiers, bien plus vite et sans remplir le cache d’historique des conversations, et l’ouverture d’un résultat mène au message exact.
+- 🧠 L’historique des conversations est lu directement dans les enregistrements d’origine des agents plutôt que dans une copie distincte sur le disque ; les dossiers `chat-index` et `chat-spool` sont supprimés au démarrage pour libérer de l’espace disque.
+- 📱 Sur téléphone, les sessions exécutées dans la vue terminal proposent de passer à la vue conversation ; après confirmation, l’application de bureau bascule aussi la session.
+- 👀 Les connexions partagées affichent en lecture seule les sessions exécutées dans la vue terminal, et seul le propriétaire de l’hôte peut les passer en vue conversation.
+- 🌐 Les paramètres de traduction ajoutent « Activer la traduction par défaut », qui définit l’état initial de la traduction pour les sessions sans choix enregistré.
+- 🌳 L’arborescence des sessions regroupe sous une même ligne de worktree les sessions qui utilisent ce worktree.
+- 📄 Les réponses courtes dans la vue conversation, y compris les messages avec images, n’affichent plus le lien « Lire le contenu intégral ».
+- 🔕 Le bouton qui efface tous les badges de notification se trouve désormais à l’extrémité gauche de la barre inférieure de l’arborescence des sessions.
+- 🤖 Les boîtes de dialogue de nouvelle session et de reprise de session affichent l’icône de chaque agent dans la liste des types d’agent, et la liste des autorisations s’ouvre vers le haut quand la place manque en dessous.
+- 🩹 La vue conversation ne signale plus d’enregistrements endommagés dans l’historique lorsque le stockage est très sollicité, et reprend le chargement peu après.
+- 📝 Dans l’éditeur Markdown, Retour arrière et Maj+Tab retirent la numérotation d’un élément de liste vide ou d’un paragraphe non numéroté à l’intérieur d’une liste.
+- 🔵 La puce « Tâches » de la vue conversation passe au cyan, la couleur qu’utilise l’arborescence des sessions pour le travail en arrière-plan, tant que des tâches d’arrière-plan sont en cours ; dans la liste des tâches, celles qui sont en cours s’affichent aussi en cyan avec la mention « En cours ».
+- 🗑️ La suppression d’une session ne propose plus de retirer les worktrees git ; utilisez « Delete worktree… » pour en retirer un.
+- 🔁 L’état de la traduction se met à jour dès qu’il change, et non plus toutes les 10 secondes, et les paramètres de traduction revérifient les agents installés à chaque ouverture.
+- 💤 Le panneau Info suspend l’échantillonnage des ressources du processus tant que la fenêtre est masquée.
+- ⏱️ L’indicateur d’activité et le minuteur du tour dans la vue conversation ne disparaissent plus et ne restent plus affichés à tort lorsqu’un tour commence ou se termine pendant que vous changez de session.
+- 🔗 `vrefer` numérote les messages de la même façon que `vsearch`, et pour les sessions Codex dérivées, `vrefer` et la recherche globale incluent l’historique de la conversation parente.
+
 ## v0.2.11 — 2026-10-18
 
 - 🧪 Les aperçus HTML expérimentaux s’ouvrent à côté des conversations ou dans des onglets, s’actualisent avec les fichiers et proposent source, console et versions ; la validation native et multiplateforme reste à effectuer.

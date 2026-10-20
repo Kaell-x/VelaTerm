@@ -22,6 +22,8 @@ const zhTW: typeof en = {
   "translation.title": "翻譯",
   "translation.enable": "啟用翻譯",
   "translation.visibility": "啟用此功能後，工作階段才會顯示翻譯控制項。",
+  "translation.defaultEnabled": "預設開啟翻譯",
+  "translation.defaultEnabledHint": "尚未個別儲存翻譯設定的工作階段會使用此預設值。變更會自動儲存。",
   "translation.conversationKinds": "適用的智慧體類型",
   "translation.conversationKindsHint": "僅在所選智慧體類型的工作階段中顯示翻譯控制項並啟用自動翻譯。變更會自動儲存。",
   "translation.chooseConversationKinds": "請選擇智慧體類型",
@@ -1230,8 +1232,6 @@ const zhTW: typeof en = {
     `確認刪除群組「${name}」，其下所有子群組與會話也會一併刪除。此操作不可復原。`, // Delete group "{name}"?…
   "tree.deleteSessionBody": (name) =>
     `確認刪除會話「${name}」（及其下所有子會話）。此操作不可復原。`, // Delete session "{name}"…
-  "tree.deleteWorktrees": (n) =>
-    `同時刪除關聯的 git worktree（共 ${n} 個；工作區有改動可能刪除失敗）`, // Also remove associated git worktrees…
 
   // Session information dialog
   "info.name": "名稱", // Name
@@ -1278,9 +1278,9 @@ const zhTW: typeof en = {
   "worktree.noRepoRoot": "此專案沒有可用的 git 倉庫路徑。", // This project has no usable git repository path.
   // ── Worktree selector for custom session creation ──
   "worktreeSel.label": "Worktree",
-  "worktreeSel.modeNone": "不掛", // None
-  "worktreeSel.modeNew": "新建", // New
-  "worktreeSel.modeExisting": "選現有", // Existing
+  "worktreeSel.modeNone": "不使用", // None
+  "worktreeSel.modeNew": "建立新的", // New
+  "worktreeSel.modeExisting": "選取現有", // Existing
   "worktreeSel.loading": "正在載入 worktree…", // Loading worktrees…
   "worktreeSel.empty": "此儲存庫沒有現有的 worktree。", // No existing worktrees in this repository.
   "worktreeSel.loadFailed": "無法列出 worktree（不是 git 儲存庫？）。", // Couldn't list worktrees (not a git repository?).
@@ -1326,6 +1326,7 @@ const zhTW: typeof en = {
   "search.backToResults": "返回結果", // Back to results
   "search.archivedBadge": "已封存", // Archived
   "search.summary": (m, s) => `命中 ${m} 處 · ${s} 個會話`, // X matches · N sessions
+  "search.pending": (n) => `還有 ${n} 個會話正在建立索引，結果可能不完整。`, // N sessions are still being indexed, so results may be incomplete
   "search.matchPosition": (n, total) => `第 ${n} / 共 ${total}`, // N of M
   "search.roleTerminal": "終端", // Terminal
   "search.collapseGroup": "收合", // Collapse
@@ -1710,6 +1711,10 @@ const zhTW: typeof en = {
   "mobile.noMatch": "沒有符合的工作階段", // No matching sessions
   "mobile.empty2": "在桌面應用程式或電腦瀏覽器中建立工作階段後，此處會自動顯示。", // Create one on the desktop app or a computer browser…
   "mobile.back": "‹ 返回", // ‹ Back
+  "mobile.tuiSuggest": "這個工作階段以終端機檢視執行。在手機上使用會話檢視體驗更好。", // This session runs in terminal view. Conversation view works better on a phone.
+  "mobile.tuiShareReadOnly": "這個工作階段以終端機檢視執行，在這裡只能檢視，無法回覆。切換到會話檢視後即可繼續對話。", // This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.
+  "mobile.tuiShareHost": "這個工作階段以終端機檢視執行，在這裡只能檢視，無法回覆。主機擁有者可以將它切換為會話檢視。", // This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.
+  "mobile.switchToConversation": "切換到會話檢視", // Switch to conversation view
   "mobile.selCopy": "複製", // Copy
   "mobile.selCancel": "取消", // Cancel
 
@@ -1930,6 +1935,8 @@ const zhTW: typeof en = {
   "session.switchBody": "目前進行中的回合會中斷，對話內容不會遺失。",
   "session.switchBodyBackground": "智慧體啟動的背景工作可能會停止，工作結束時智慧體也不會收到通知。對話內容不會遺失。",
   "session.switchConfirm": "切換",
+  "session.switchBodyIdle": "終端機中的智慧體會停止，並在會話檢視中繼續執行。對話內容不會遺失。", // The agent in the terminal stops and continues in conversation view. Your conversation is kept.
+  "session.switchDesktopNote": "桌面應用程式中的這個工作階段也會切換為會話檢視。", // The desktop app will also show this session in conversation view.
   "session.terminalViewHint": "點選這裡即可切換回終端機檢視。",
   "session.loading": "正在讀取對話…",
   "session.unavailable": "暫時無法讀取此會話的對話內容",

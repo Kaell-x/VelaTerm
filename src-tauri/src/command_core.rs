@@ -861,10 +861,9 @@ pub fn read_agent_transcript(
     let (kind, agent_id) = session_kind_and_agent(ctx, session_id)?;
     if crate::agent::history_store::prose::supported(kind) {
         let branch=crate::agent::history_store::api::prepare(ctx,session_id)?;
-        let conn=branch.store.connect()?;let mut ready=branch.error.is_none();let mut total=0u64;
+        let mut ready=branch.error.is_none();let mut total=0u64;
         for source in &branch.sources {
-            let (water,status):(u64,String)=conn.query_row("SELECT indexed_bytes,status FROM sources WHERE id=?1 AND generation=?2",
-                rusqlite::params![source.id,source.generation],|row|Ok((row.get(0)?,row.get(1)?))).map_err(|e|e.to_string())?;
+            let (water,status)=source.progress()?;
             ready&=status=="complete" || source.segment.end_byte.is_some_and(|end|water>=end);
             total=total.saturating_add(source.segment.end_byte.unwrap_or(source.size));
         }
@@ -1400,7 +1399,7 @@ pub fn chat_queue_update(
 
 /// Stop the turn in progress, leaving the conversation open.
 pub fn chat_interrupt(ctx: &AppCtx, session_id: &str) -> Result<(), String> {
-    ctx.chat().interrupt(session_id)
+    ctx.chat().interrupt(ctx, session_id)
 }
 
 /// Answer a permission question raised by a tool the agent wants to run.

@@ -11,7 +11,7 @@ export interface TranslationPreferences {
   replySource: string; replyTarget: string; display: TranslationDisplay; repliesSince: number;
 }
 export interface TranslationConfig {
-  enabled: boolean; conversationKinds: SessionKind[]; engine: TranslationEngine; agent: SessionKind | ""; model: string; effort: string;
+  enabled: boolean; defaultEnabled: boolean; conversationKinds: SessionKind[]; engine: TranslationEngine; agent: SessionKind | ""; model: string; effort: string;
   serviceId: string; version: number; generation: number; enabledSince: number;
 }
 export interface TranslationService { id: string; name: string; baseUrl: string; model: string; hasKey: boolean }

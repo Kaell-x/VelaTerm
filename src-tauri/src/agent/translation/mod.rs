@@ -228,6 +228,7 @@ pub fn prepare(app: &AppCtx,args: &Value) -> Result<Value,String> {
                 conn.execute("DELETE FROM chat_submissions WHERE session_id=?1 AND id=?2",params![sid,id]).map_err(db_error)?;
             } else {
                 conn.execute("UPDATE translation_jobs SET state='dispatched' WHERE session_id=?1 AND message_id=?2",params![sid,id]).map_err(db_error)?;
+                drop(conn);app.emit(&format!("translation://session/{sid}"),json!({}));
                 return Ok(json!({"id":id}));
             }
         }
@@ -287,6 +288,8 @@ pub fn send(app: &AppCtx,sid: &str,original: &str,images: Vec<ChatImage>,behavio
     if outcome.as_ref().err().is_some_and(|e|e=="chat_submission_pending") && state!="dispatched" {
         app.db().conn.lock().unwrap().execute("UPDATE translation_jobs SET state='dispatched' WHERE session_id=?1 AND message_id=?2",params![sid,id]).map_err(db_error)?;
     }
+    // Views read translation state only on change events, and the delivery receipt changed either way.
+    app.emit(&format!("translation://session/{sid}"),json!({}));
     outcome
 }
 
@@ -439,7 +442,8 @@ fn reply_worker(app: &AppCtx,sid: &str,id: &str) {
         let Some((cfg,(original,source,target,generation,auto)))=task else{return};
         let active={let conn=app.db().conn.lock().unwrap();let prefs=config::read_preferences(&conn,sid).unwrap_or_default();
             config::enabled_for(&conn,&cfg,sid).unwrap_or(false) && cfg.generation==generation && (!auto || prefs.replies) && prefs.reply_source==source && prefs.reply_target==target};
-        if !active {let _=app.db().conn.lock().unwrap().execute("UPDATE translation_replies SET state='canceled' WHERE session_id=?1 AND row_id=?2 AND generation=?3",params![sid,id,generation]);return;}
+        if !active {let _=app.db().conn.lock().unwrap().execute("UPDATE translation_replies SET state='canceled' WHERE session_id=?1 AND row_id=?2 AND generation=?3",params![sid,id,generation]);
+            app.emit(&format!("translation://session/{sid}"),json!({}));return;}
         let active_since=now_ms();
         {let conn=app.db().conn.lock().unwrap();
             let changed=conn.execute("UPDATE translation_replies SET started_at=?1 WHERE session_id=?2 AND row_id=?3 AND generation=?4 AND source=?5 AND target=?6 AND state='pending'",params![active_since,sid,id,generation,source,target]).unwrap_or(0);
@@ -482,6 +486,7 @@ pub fn dispatch(app: &AppCtx,cmd: &str,args: &Value,editable: bool) -> Result<Va
     match cmd {
         "translation_settings"=>config::settings(app,editable),
         "translation_enable"=>{config::enable(app,args["enabled"]==true)?;Ok(Value::Null)},
+        "translation_set_default_enabled"=>{config::set_default_enabled(app,args["enabled"].as_bool().ok_or("translation:configuration")?)?;Ok(Value::Null)},
         "translation_set_conversation_kinds"=>{config::set_conversation_kinds(app,&args["kinds"])?;Ok(Value::Null)},
         "translation_save"=>{config::save(app,&args["config"])?;Ok(Value::Null)},
         "translation_service_save"=>Ok(json!(config::service_save(app,&args["service"])?)),

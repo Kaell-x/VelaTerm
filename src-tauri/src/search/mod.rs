@@ -13,15 +13,20 @@
 //! Search jobs live in [`jobs`]; segmentation in [`tokenize`]; ANSI stripping in [`ansi`]; fuzzy text
 //! matching shared with the knowledge searches in [`fuzzy`].
 //!
-//! Navigation anchors: transcripts use `message_index`, which the frontend scrolls to; recordings use
+//! Navigation anchors: transcripts use `message_index`, which the frontend scrolls to, and, when the
+//! message was read from its file directly, `record_offset`, which locates it exactly; recordings use
 //! `ordinal`, the number of `findNext` operations to perform, counted among the matching lines.
 
 pub mod ansi;
 pub mod corpus;
+mod extract;
 pub mod fuzzy;
 pub mod jobs;
 mod legacy;
 pub mod tokenize;
+
+/// Conversations read straight from the provider's records, numbered as search numbers them.
+pub(crate) use extract::conversation;
 
 use serde::Serialize;
 
@@ -75,6 +80,10 @@ pub struct SearchMatch {
     pub timestamp:Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub row_id:Option<String>,
+    /// Byte offset of the message's first record in its transcript file; the conversation view locates
+    /// the message by it.
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub record_offset:Option<u64>,
 }
 
 /// A matching session and its snippets, preserving the previous fields and serialization.
@@ -119,42 +128,69 @@ pub fn reindex_session_quiet(app: &AppCtx, session_id: &str) {
     });
 }
 
-/// After startup: remove the business database's old search tables once, then fill the search index in
-/// the background so the first search does not have to read every conversation. A search running at the
-/// same time indexes the sessions it needs itself; the two take turns session by session.
+/// After startup: remove the business database's old search tables once, remove earlier index files the
+/// current one has replaced, then fill the search index in the background so the first search does not
+/// have to read every conversation.
 pub fn warm_index(app: AppCtx) {
     std::thread::spawn(move || {
         legacy::remove(&app);
-        let cancel=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let started=std::time::Instant::now();let (mut indexed,mut skipped,mut pressure)=(0u64,0u64,0u32);
-        let Ok(conn)=corpus::open(&app) else {return;};
-        let mut after:Option<String>=None;
-        'sessions: while let Ok(sessions)=corpus::sessions(&app,after.as_deref()) {
-            if sessions.is_empty() {break;}
-            for session in sessions {
-                after=Some(session.id.clone());
-                match corpus::refresh_session(&app,&conn,&session,&cancel) {
-                    Ok(corpus::Refreshed::Indexed(_))=>{indexed+=1;pressure=0;},
-                    Ok(_)=>pressure=0,
-                    // Storage pressure usually passes once other readers finish; a search later
-                    // retries the sessions skipped here. Persistent pressure ends the warm-up.
-                    Err(error) if error.starts_with("storage_pressure:")=> {
-                        skipped+=1;pressure+=1;
-                        crate::diagnostics::record("WARN","search_session_skipped",serde_json::json!({"sessionId":session.id,"errorCode":"unavailable"}));
-                        if pressure>=10 {break 'sessions;}
-                        std::thread::sleep(std::time::Duration::from_secs(30));
-                    },
-                    Err(_)=>skipped+=1,
-                }
-                // Leave room for interactive work between sessions.
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-        }
-        let _=corpus::prune(&conn);
-        if indexed>0 {let _=corpus::optimize(&conn);}
-        crate::diagnostics::record("INFO","search_warmup",serde_json::json!({"status":"complete","inputCount":indexed,"retryCount":skipped,
-            "durationMs":started.elapsed().as_millis() as u64}));
+        corpus::remove_earlier(&app);
+        // History is indexed in memory now; the derived index and protocol spool earlier versions kept
+        // on disk are removed.
+        if let Ok(dir)=app.data_dir() {crate::agent::history_store::store::retire_persisted(&dir);}
+        if let Some(background)=corpus::Background::begin(&app) {catch_up(&app,&background);}
     });
+}
+
+/// Bring every session up to date in the background. A search that runs meanwhile answers from what is
+/// indexed and leaves never-indexed sessions to this pass, which starts no new session while a search
+/// is refreshing.
+fn catch_up(app: &AppCtx,background: &corpus::Background) {
+    let cancel=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let started=std::time::Instant::now();let (mut indexed,mut skipped,mut pressure)=(0u64,0u64,0u32);
+    let Ok(conn)=corpus::open(app) else {return;};
+    let mut after:Option<String>=None;let mut complete=true;
+    'sessions: loop {
+        let Ok(sessions)=corpus::sessions(app,after.as_deref()) else {complete=false;break;};
+        if sessions.is_empty() {break;}
+        for session in sessions {
+            background.yield_to_searches();
+            after=Some(session.id.clone());
+            match corpus::refresh_session(app,&conn,&session,&cancel) {
+                Ok(corpus::Refreshed::Indexed(_))=>{indexed+=1;pressure=0;},
+                Ok(_)=>pressure=0,
+                // Storage pressure usually passes once other readers finish; a search later
+                // retries the sessions skipped here. Persistent pressure ends the warm-up.
+                Err(error) if error.starts_with("storage_pressure:")=> {
+                    skipped+=1;pressure+=1;
+                    crate::diagnostics::record("WARN","search_session_skipped",serde_json::json!({"sessionId":session.id,"errorCode":"unavailable"}));
+                    complete=false;if pressure>=10 {break 'sessions;}
+                    std::thread::sleep(std::time::Duration::from_secs(30));
+                },
+                // A conversation that cannot be read, or no longer exists, stays that way; anything
+                // else may pass, so the pass does not count as complete.
+                Err(error)=> {
+                    skipped+=1;
+                    if !["index_incomplete:","unsupported_record:","detail_unavailable:","source_missing:"].iter().any(|code|error.starts_with(code)) {complete=false;}
+                },
+            }
+            // Leave room for interactive work between sessions.
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+    let _=corpus::prune(&conn);
+    if indexed>0 {let _=corpus::optimize(&conn);}
+    // Only a pass that reached every session retires the earlier index files.
+    if complete {let _=corpus::mark_built(app,&conn);}
+    crate::diagnostics::record("INFO","search_warmup",serde_json::json!({"status":"complete","inputCount":indexed,"retryCount":skipped,
+        "durationMs":started.elapsed().as_millis() as u64}));
+}
+
+/// Start a background pass for sessions a search deferred; no-op while one is running.
+pub(super) fn catch_up_later(app: &AppCtx) {
+    let Some(background)=corpus::Background::begin(app) else {return;};
+    let app=app.clone();
+    std::thread::spawn(move || catch_up(&app,&background));
 }
 
 #[cfg(test)]
@@ -192,7 +228,7 @@ mod tests {
     /// Inserts one index fragment directly to isolate search, aggregation, and ordinal behavior from extraction.
     fn insert_fts(db: &Fixture, sid: &str, source: &str, message_index: Option<i64>, ordinal: i64, text: &str) {
         let conn=corpus::open(&db.app).unwrap();
-        corpus::insert(&conn,sid,source,message_index,ordinal,None,None,text).unwrap();
+        corpus::insert(&conn,sid,source,message_index,ordinal,None,None,None,text).unwrap();
     }
 
     fn search_in(db: &Fixture, query: &str, scope: SearchScope, session: Option<&str>) -> Vec<SessionSearchHit> {

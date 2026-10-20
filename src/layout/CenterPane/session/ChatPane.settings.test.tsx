@@ -244,7 +244,7 @@ async function mountPane(kind: "claude" | "codex" | "opencode" | "antigravity" =
 
 function mockOutgoingTranslation(pending: TranslationSession["pending"] = []) {
   const settings: TranslationSettings = {
-    config: { enabled: true, conversationKinds: ["claude", "codex"], engine: "google", agent: "", model: "", effort: "", serviceId: "", version: 1, generation: 1, enabledSince: 0 },
+    config: { enabled: true, defaultEnabled: true, conversationKinds: ["claude", "codex"], engine: "google", agent: "", model: "", effort: "", serviceId: "", version: 1, generation: 1, enabledSince: 0 },
     editable: true, services: [], agents: [], conversationKinds: [], languages: [{ code: "en", name: "English" }],
     engines: ["google"], protocols: [], displays: ["immersive"],
   };

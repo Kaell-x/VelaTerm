@@ -5,13 +5,19 @@ import type { ChatRow } from "../ipc/chat";
 const rpc = vi.hoisted(() => ({readAgentChat:vi.fn(),ptyWrite:vi.fn(),shellRow:vi.fn()}));
 vi.mock("../ipc/commands", () => rpc);
 vi.mock("../i18n", () => ({useT:()=>(key:string)=>key}));
+const share = vi.hoisted(() => ({isShareSurface:false}));
+vi.mock("../ipc/shareBase", () => share);
+const chat = vi.hoisted(() => ({shareAccess:vi.fn()}));
+vi.mock("../ipc/chat", () => chat);
+const engine = vi.hoisted(() => ({switchTo:vi.fn()}));
+vi.mock("../layout/CenterPane/session/engineSwitch", () => ({useEngineSwitch:()=>({switchTo:engine.switchTo,confirm:null})}));
 vi.mock("../layout/sessionViewers/TranscriptViewer", () => ({assistantLabel:()=>"Agent"}));
 vi.mock("../layout/CenterPane/session/rows",()=>({MessageBubble:({text}:{text:string})=><p>{text}</p>,ReasoningRow:()=>null,ToolCard:()=>null,
  ShellRow:(props:{row:Extract<ChatRow,{kind:"shell"}>;onCancel?:(id:string)=>void})=>{rpc.shellRow(props);return <p>{props.row.command}</p>},
 }));
 import {MobileRecordedConversation} from "./MobileRecordedConversation";
 const session={id:"remote",kind:"codex",engine:"tui"} as Session;
-afterEach(()=>{cleanup();vi.resetAllMocks();vi.useRealTimers()});
+afterEach(()=>{cleanup();vi.resetAllMocks();vi.useRealTimers();share.isShareSurface=false});
 describe("手机读取终端会话",()=>{
  it("uses a read-only empty state for Kiro without prompting for input",async()=>{
   rpc.readAgentChat.mockResolvedValue([]);
@@ -64,6 +70,37 @@ describe("手机读取终端会话",()=>{
   fireEvent.click(screen.getByRole("button",{name:"session.send"}));
   expect(await screen.findByRole("alert")).toBeTruthy();expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("保留输入");
   expect(rpc.ptyWrite).toHaveBeenCalledTimes(1);
+ });
+ it("suggests the conversation view and switches through the confirming hook",async()=>{
+  rpc.readAgentChat.mockResolvedValue([]);
+  render(<MobileRecordedConversation session={session}/>);
+  expect(await screen.findByText("mobile.tuiSuggest")).toBeTruthy();
+  expect(screen.getByRole("textbox")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"mobile.switchToConversation"}));
+  expect(engine.switchTo).toHaveBeenCalledWith("chat");
+  expect(chat.shareAccess).not.toHaveBeenCalled();
+ });
+ it("keeps a shared terminal session read-only and offers the switch to the host's own account",async()=>{
+  share.isShareSurface=true;rpc.readAgentChat.mockResolvedValue([]);chat.shareAccess.mockResolvedValue({canSwitchEngine:true});
+  render(<MobileRecordedConversation session={session}/>);
+  expect(await screen.findByText("mobile.tuiShareReadOnly")).toBeTruthy();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:"mobile.switchToConversation"}));
+  expect(engine.switchTo).toHaveBeenCalledWith("chat");
+  expect(rpc.ptyWrite).not.toHaveBeenCalled();
+ });
+ it("tells other share visitors that the host switches the view",async()=>{
+  share.isShareSurface=true;rpc.readAgentChat.mockResolvedValue([]);chat.shareAccess.mockRejectedValue(new Error("offline"));
+  render(<MobileRecordedConversation session={session}/>);
+  expect(await screen.findByText("mobile.tuiShareHost")).toBeTruthy();
+  expect(screen.queryByRole("button",{name:"mobile.switchToConversation"})).toBeNull();
+  expect(screen.queryByRole("textbox")).toBeNull();
+ });
+ it("offers no switch for Kiro",async()=>{
+  rpc.readAgentChat.mockResolvedValue([]);
+  render(<MobileRecordedConversation session={{...session,kind:"kiro"}}/>);
+  await screen.findByText("archive.emptyTranscript");
+  expect(screen.queryByRole("note")).toBeNull();
  });
  it("卸载后不再安排刷新",async()=>{
   vi.useFakeTimers();let resolve!:(value:[])=>void;rpc.readAgentChat.mockReturnValue(new Promise(r=>{resolve=r}));
