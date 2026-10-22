@@ -1,37 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import Icons from "../components/Icons";
 import { useT } from "../i18n";
-import { ptyWrite, readAgentChat, type ChatEvent } from "../ipc/commands";
+import { readAgentChat, type ChatEvent } from "../ipc/commands";
 import { MessageBubble, ReasoningRow, ShellRow, ToolCard, WakeRow } from "../layout/CenterPane/session/rows";
 import { assistantLabel } from "../layout/sessionViewers/TranscriptViewer";
-import { supportsChatEngine, type Session } from "../types";
+import type { Session } from "../types";
 import { hasPagedHistory } from "../layout/sessionViewers/pagedHistory";
 import { PagedConversation } from "../layout/sessionViewers/PagedConversation";
 import "../layout/CenterPane/session/session-view.css";
-import { useEngineSwitch } from "../layout/CenterPane/session/engineSwitch";
-import { shareAccess } from "../ipc/chat";
-import { isShareSurface } from "../ipc/shareBase";
-
-/** Whether this client may move a terminal-view agent to the conversation view: always on a direct
- * connection, only for the host's own account through a share. Null while a share connection is asking. */
-function useCanSwitch(): boolean | null {
-  const [shared, setShared] = useState<boolean | null>(null);
-  useEffect(() => {
-    if (!isShareSurface) return;
-    let disposed = false;
-    shareAccess().then(a => { if (!disposed) setShared(a.canSwitchEngine); }, () => { if (!disposed) setShared(false); });
-    return () => { disposed = true; };
-  }, []);
-  return isShareSurface ? shared : true;
-}
+import { submitToTerminal } from "./terminalSubmit";
+import { useShareAccess } from "./shareAccess";
 
 /** Reads the running terminal's recording without acquiring its PTY or starting a chat engine. */
 export function MobileRecordedConversation({ session, cwd }: { session: Session; cwd?: string }) {
   const t = useT();
-  // A share connection cannot write to the host terminal, so it reads the record until the view is switched.
-  const readOnly = session.kind === "kiro" || isShareSurface;
-  const canSwitch = useCanSwitch();
-  const { switchTo, confirm } = useEngineSwitch(session, { fromPhone: true });
+  // Through a share only the host's own account may write to the host terminal; other visitors only read.
+  // Null access means a share connection is still asking.
+  const access = useShareAccess();
+  const readOnly = session.kind === "kiro" || !(access?.canUseTerminal ?? false);
   const paged=hasPagedHistory(session);
   const [rows, setRows] = useState<ChatEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,9 +53,7 @@ export function MobileRecordedConversation({ session, cwd }: { session: Session;
     const text = draft;
     sendingRef.current = true; setSending(true); setSendError(null);
     try {
-      // Bracketed paste keeps multiline messages as text; Enter submits to the existing terminal.
-      await ptyWrite(session.id, `\x1b[200~${text.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")}\x1b[201~`);
-      await ptyWrite(session.id, "\r");
+      await submitToTerminal(session.id, text);
       setDraft(current => current === text ? "" : current);
     } catch (e) { setSendError(String(e)); }
     finally { sendingRef.current = false; setSending(false); }
@@ -88,13 +72,6 @@ export function MobileRecordedConversation({ session, cwd }: { session: Session;
         : row.kind === "wake" ? <WakeRow key={row.index} summary={row.text ?? ""} at={row.timestamp ?? undefined} />
         : <MessageBubble key={row.index} who={row.kind === "user" ? t("archive.you") : assistantLabel(session.kind)} isUser={row.kind === "user"} text={row.text ?? ""} at={row.timestamp ?? undefined} />)}
     </div>}
-    {supportsChatEngine(session.kind) && canSwitch !== null && <div className="m-recorded-switch" role="note">
-      <p>{t(!isShareSurface ? "mobile.tuiSuggest" : canSwitch ? "mobile.tuiShareReadOnly" : "mobile.tuiShareHost")}</p>
-      {canSwitch && <button type="button" className="vlx-btn vlx-btn-primary" onClick={() => switchTo("chat")}>
-        {t("mobile.switchToConversation")}
-      </button>}
-    </div>}
-    {confirm}
     {!readOnly && <form className="m-recorded-composer" onSubmit={e => { e.preventDefault(); void send(); }}>
       {sendError && <p role="alert">{t("chat.submission.failed")}: {sendError}</p>}
       <div className="m-recorded-input">

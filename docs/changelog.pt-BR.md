@@ -1,3 +1,12 @@
+## v0.2.13 — 2026-10-22
+
+- 📱 No celular, agentes em execução na visão de terminal abrem direto no terminal, com uma caixa de entrada flutuante para escrever ou ditar mensagens inteiras; os pequenos botões “Transcrição” e “Terminal” no cabeçalho alternam entre os dois, e a transcrição não sugere mais mudar para a visão de conversa.
+- 🔑 Em conexões compartilhadas, o proprietário do host pode abrir o terminal de agentes em execução na visão de terminal e digitar nele, e a lista de sessões também mostra agentes sem visão de conversa, como o Kiro; contas convidadas continuam vendo uma transcrição somente leitura.
+- 🌐 Traduzir manualmente uma resposta em uma sessão ociosa mostra a tradução em vez de “A tradução está indisponível”.
+- 📜 Enquanto você rola para cima em uma conversa longa, as novas respostas não ficam mais presas atrás de “Carregar mensagens mais recentes”, e rolar para baixo a partir do histórico anterior carrega automaticamente as mensagens mais recentes.
+- 🧭 A visão para celular não oferece mais “Mudar para a versão desktop”, e os celulares que mudaram antes voltam automaticamente à visão para celular.
+- 🧹 Os registros de execução do `vrun` são excluídos automaticamente 24 horas depois que a tarefa termina.
+
 ## v0.2.12 — 2026-10-20
 
 - 🛑 Interromper um turno do Claude na visão de conversa tem efeito imediato, e a próxima mensagem é enviada na hora, mesmo quando o computador está muito sobrecarregado.

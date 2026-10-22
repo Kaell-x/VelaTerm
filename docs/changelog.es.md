@@ -1,3 +1,12 @@
+## v0.2.13 — 2026-10-22
+
+- 📱 En el teléfono, los agentes que se ejecutan en la vista de terminal se abren directamente en el terminal, con un cuadro de entrada flotante para escribir o dictar mensajes completos; los pequeños botones «Transcripción» y «Terminal» del encabezado alternan entre ambos, y la transcripción ya no sugiere cambiar a la vista de conversación.
+- 🔑 En las conexiones compartidas, el propietario del equipo puede abrir el terminal de los agentes que se ejecutan en la vista de terminal y escribir en él, y la lista de sesiones también muestra agentes sin vista de conversación, como Kiro; las cuentas invitadas siguen viendo una transcripción de solo lectura.
+- 🌐 Traducir manualmente una respuesta en una sesión inactiva muestra la traducción en lugar de «La traducción no está disponible».
+- 📜 Mientras te desplazas hacia arriba en una conversación larga, las respuestas nuevas ya no quedan detrás de «Cargar mensajes más recientes», y al bajar desde el historial anterior los mensajes más recientes se cargan automáticamente.
+- 🧭 La vista para teléfono ya no ofrece «Cambiar a versión de escritorio», y los teléfonos que cambiaron antes vuelven automáticamente a la vista para teléfono.
+- 🧹 Los registros de ejecución de `vrun` se eliminan automáticamente 24 horas después de que termine la tarea.
+
 ## v0.2.12 — 2026-10-20
 
 - 🛑 Detener un turno de Claude en la vista de conversación surte efecto de inmediato y el siguiente mensaje se envía al momento, incluso cuando el equipo está muy cargado.

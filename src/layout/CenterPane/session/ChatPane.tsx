@@ -545,13 +545,27 @@ export function ChatPane({
   /** Tells the virtualizer the scroller's real offset; set while it observes the scroller. */
   const syncVirtualOffset = useRef<(() => void) | null>(null);
 
+  /** The first row still in view and its offset, so a reshaped window can put the reader back. Reads refs only. */
+  const readingAnchor = () => {
+    const scroll = scrollRef.current;
+    if (!scroll) return null;
+    const viewport = scroll.getBoundingClientRect();
+    const anchor = Array.from(scroll.querySelectorAll<HTMLElement>(".sv-item[data-search-id]")).find(element => element.getBoundingClientRect().bottom > viewport.top);
+    return { height: scroll.scrollHeight, top: scroll.scrollTop,
+      anchor: anchor ? { id: anchor.dataset.searchId!, offset: anchor.getBoundingClientRect().top - viewport.top } : undefined };
+  };
+
   /** Add or replace rows by id. The engine addresses rows this way so a message can be revised as it lands. */
   const applyRows = useCallback((incoming: ChatRow[]) => {
     setRows(prev => {
       const known = snapshotRef.current;
       if (known?.protocolVersion !== 2) return mergeRows(prev, incoming, known?.hasMore ?? false);
+      // A window parked mid-history only revises what it shows. A window that holds the end keeps every
+      // live row, wherever the reader is, and gives up its oldest rows instead.
       const visible = known.hasNewer ? incoming.filter(row => prev.some(current => current.id === row.id)) : incoming;
-      const window = limitHistoryWindow(mergeRows(prev, visible, known.hasMore ?? false), pinnedRef.current ? "newer" : "older");
+      const window = limitHistoryWindow(mergeRows(prev, visible, known.hasMore ?? false), known.hasNewer ? "older" : "newer");
+      // Dropping rows above a reader who scrolled up would slide the text out from under them.
+      if (window.droppedBefore && !pinnedRef.current) prependScroll.current ??= readingAnchor();
       if (window.droppedBefore) setHasMore(true);
       if (window.droppedAfter) setHasNewer(true);
       snapshotRef.current = { ...known, hasMore: known.hasMore || window.droppedBefore, hasNewer: known.hasNewer || window.droppedAfter };
@@ -988,13 +1002,7 @@ export function ChatPane({
     try {
       const page = await chatSnapshot(session.id, { historyOnly, protocolVersion: 2, after, historyGeneration: known.historyGeneration, readJobId: indexReader.current });
       if (generation !== historyGeneration.current) return;
-      const scroll = scrollRef.current;
-      if (scroll) {
-        const viewport = scroll.getBoundingClientRect();
-        const anchor = Array.from(scroll.querySelectorAll<HTMLElement>(".sv-item[data-search-id]")).find(element => element.getBoundingClientRect().bottom > viewport.top);
-        prependScroll.current = { height: scroll.scrollHeight, top: scroll.scrollTop,
-          anchor: anchor ? { id: anchor.dataset.searchId!, offset: anchor.getBoundingClientRect().top - viewport.top } : undefined };
-      }
+      prependScroll.current = readingAnchor() ?? prependScroll.current;
       setRows(current => {
         const window = limitHistoryWindow(mergeRows(current, page.rows), "newer");
         setHasMore((known.hasMore ?? false) || window.droppedBefore);return window.rows;
@@ -2541,7 +2549,9 @@ export function ChatPane({
                   return;
                 }
                 if (el.scrollTop < 80 && !historyError) void loadHistory();
-                const pinned = el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK;
+                const below = el.scrollHeight - el.scrollTop - el.clientHeight;
+                if (below < 80 && hasNewer && !historyError) void loadNewerHistory();
+                const pinned = below <= PIN_SLACK;
                 pinnedRef.current = pinned;
                 setAway((prev) => (prev === !pinned ? prev : !pinned));
               }}

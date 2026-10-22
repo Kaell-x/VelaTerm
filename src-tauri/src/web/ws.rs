@@ -606,19 +606,26 @@ fn handle_text(
         }
         "pty-spawn" => {
             let id = msg.get("id").cloned().unwrap_or(Value::Null);
-            if share.is_some() {
-                // Share visitors never get a terminal, so no PTY may be started for them.
-                let _ = out_tx.send(Message::Text(
-                    json!({"t":"reply","id":id,"ok":false,"error":"Terminals are unavailable through a public share"}).to_string(),
-                ));
-                return;
-            }
             let sid = msg
                 .get("sid")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let args = msg.get("args").cloned().unwrap_or(Value::Null);
+            let mut args = msg.get("args").cloned().unwrap_or(Value::Null);
+            if let Some(scope) = share.as_ref() {
+                // Only the host's own account gets a terminal through a share, and only a terminal-view agent
+                // inside the grant. The launch then uses host records: the client's kind, shell, directory and
+                // initial prompt are discarded, so a visitor page cannot choose what runs or where.
+                match super::share_policy::owner_terminal_session(&ctx.app, scope, &sid) {
+                    Ok(session) => args = owner_spawn_args(&ctx.app, &session, &args),
+                    Err(_) => {
+                        let _ = out_tx.send(Message::Text(
+                            json!({"t":"reply","id":id,"ok":false,"error":"Terminals are unavailable through a public share"}).to_string(),
+                        ));
+                        return;
+                    }
+                }
+            }
             // Reconnect attachment never starts a process. If another client closed the session while offline,
             // return an error so this client closes its view instead of resurrecting an empty shell.
             let attach_only = msg
@@ -697,6 +704,23 @@ fn listen_forward(app: &AppCtx, name: &str, out_tx: outbound::Sender) -> Listene
         let message=Message::Text(msg.to_string());
         let _=if presentation {out_tx.presentation(message)} else {out_tx.send(message)};
     })
+}
+
+/// Spawn arguments for a share owner's terminal, rebuilt from the session record. Only the grid size, theme
+/// brightness and diagnostic identifiers come from the client. A session without its own directory runs in
+/// its project's, as the host frontend launches it.
+fn owner_spawn_args(app: &AppCtx, session: &crate::models::Session, client: &Value) -> Value {
+    let cwd = session.cwd.clone().filter(|c| !c.trim().is_empty()).or_else(|| {
+        let conn = app.db().conn.lock().ok()?;
+        repo::get_project_root(&conn, &session.project_id).ok().flatten()
+    });
+    let mut args = json!({"kind":session.kind,"shell":session.shell,"cwd":cwd});
+    for key in ["cols", "rows", "dark", "diagnosticRequestId", "diagnosticOperationId"] {
+        if let Some(value) = client.get(key) {
+            args[key] = value.clone();
+        }
+    }
+    args
 }
 
 /// WS-side PTY spawn-or-attach. Builds a sink that wraps bytes in binary frames for the outbound channel,

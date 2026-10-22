@@ -1736,18 +1736,17 @@ const ko: typeof en = {
   "mobile.inputOptions": "입력 옵션",
   "mobile.connections": "연결 관리",
   "mobile.more": "추가 작업",
-  "mobile.toDesktop": "데스크톱 버전으로 전환", // Switch to desktop
   "mobile.empty1": "세션이 없습니다.", // No sessions.
   "mobile.noMatch": "일치하는 세션이 없습니다", // No matching sessions
   "mobile.empty2":
     "데스크톱 앱이나 PC 브라우저에서 만들면 여기 자동으로 나타납니다.", // Create one on the desktop app or a computer browser…
   "mobile.back": "‹ 뒤로", // ‹ Back
-  "mobile.tuiSuggest": "이 세션은 터미널 보기로 실행 중입니다. 휴대폰에서는 대화 보기가 더 편리합니다.", // This session runs in terminal view. Conversation view works better on a phone.
-  "mobile.tuiShareReadOnly": "이 세션은 터미널 보기로 실행 중이므로 여기서는 읽기만 할 수 있고 답장할 수 없습니다. 계속하려면 대화 보기로 전환하세요.", // This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.
-  "mobile.tuiShareHost": "이 세션은 터미널 보기로 실행 중이므로 여기서는 읽기만 할 수 있고 답장할 수 없습니다. 호스트 소유자가 대화 보기로 전환할 수 있습니다.", // This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.
-  "mobile.switchToConversation": "대화 보기로 전환", // Switch to conversation view
   "mobile.selCopy": "복사", // Copy
   "mobile.selCancel": "취소", // Cancel
+  "mobile.compose": "메시지 작성",
+  "mobile.composePlaceholder": "터미널로 보낼 메시지를 입력하세요",
+  "mobile.showTranscript": "기록",
+  "mobile.showTerminal": "터미널",
 
   // ── Mobile connection client (apps/mobile start page) ──
   "mobile.phaseConnecting": "SSH로 연결 중…",
@@ -1967,8 +1966,6 @@ const ko: typeof en = {
   "session.switchBody": "진행 중인 턴이 중단됩니다. 대화 내용은 그대로 유지됩니다.",
   "session.switchBodyBackground": "에이전트가 시작한 백그라운드 작업이 중단될 수 있으며, 작업이 끝나도 에이전트에게 알림이 가지 않습니다. 대화 내용은 그대로 유지됩니다.",
   "session.switchConfirm": "전환",
-  "session.switchBodyIdle": "터미널의 에이전트가 중지되고 대화 보기에서 이어서 실행됩니다. 대화 내용은 그대로 유지됩니다.", // The agent in the terminal stops and continues in conversation view. Your conversation is kept.
-  "session.switchDesktopNote": "데스크톱 앱에서도 이 세션이 대화 보기로 전환됩니다.", // The desktop app will also show this session in conversation view.
   "session.terminalViewHint": "여기를 클릭하면 터미널 보기로 돌아갈 수 있습니다.",
   "session.loading": "대화를 읽는 중…",
   "session.unavailable": "이 대화는 아직 읽을 수 없습니다",

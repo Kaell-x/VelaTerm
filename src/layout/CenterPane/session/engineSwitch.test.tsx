@@ -10,8 +10,8 @@ import { useEngineSwitch } from "./engineSwitch";
 
 const session = { id: "s1", kind: "claude", engine: "tui" } as Session;
 
-function Harness({ fromPhone = false }: { fromPhone?: boolean }) {
-  const { switchTo, confirm } = useEngineSwitch(session, { fromPhone });
+function Harness() {
+  const { switchTo, confirm } = useEngineSwitch(session);
   return (
     <>
       <button onClick={() => switchTo("chat")}>go</button>
@@ -60,24 +60,5 @@ describe("useEngineSwitch", () => {
     expect(setSessionEngineMode).not.toHaveBeenCalled();
     await act(async () => fireEvent.click(screen.getByText(t("session.switchConfirm"))));
     expect(setSessionEngineMode).toHaveBeenCalledWith("s1", "chat");
-  });
-
-  it("always asks on a phone and says the desktop switches too", async () => {
-    withState("waiting");
-    render(<Harness fromPhone />);
-    fireEvent.click(screen.getByText("go"));
-    expect(screen.getByText(t("session.switchBodyIdle"))).toBeTruthy();
-    expect(screen.getByText(t("session.switchDesktopNote"))).toBeTruthy();
-    expect(setSessionEngineMode).not.toHaveBeenCalled();
-    await act(async () => fireEvent.click(screen.getByText(t("session.switchConfirm"))));
-    expect(setSessionEngineMode).toHaveBeenCalledWith("s1", "chat");
-  });
-
-  it("keeps the turn warning on a phone while the agent works", () => {
-    withState("working");
-    render(<Harness fromPhone />);
-    fireEvent.click(screen.getByText("go"));
-    expect(screen.getByText(t("session.switchBody"))).toBeTruthy();
-    expect(screen.getByText(t("session.switchDesktopNote"))).toBeTruthy();
   });
 });

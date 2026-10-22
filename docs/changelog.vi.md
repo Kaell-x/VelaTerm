@@ -1,3 +1,12 @@
+## v0.2.13 — 2026-10-22
+
+- 📱 Trên điện thoại, các tác tử chạy ở chế độ terminal mở thẳng vào terminal, kèm ô nhập nổi để soạn hoặc đọc chính tả cả tin nhắn; các nút nhỏ “Bản ghi” và “Terminal” ở đầu trang dùng để chuyển qua lại giữa hai màn hình, và bản ghi không còn gợi ý chuyển sang chế độ hội thoại.
+- 🔑 Qua kết nối chia sẻ, chủ sở hữu máy chủ có thể mở terminal của các tác tử chạy ở chế độ terminal và nhập vào đó, danh sách phiên cũng hiển thị các tác tử không có chế độ hội thoại như Kiro; tài khoản được mời vẫn chỉ xem bản ghi ở dạng chỉ đọc.
+- 🌐 Dịch thủ công một câu trả lời trong phiên đang nhàn rỗi sẽ hiển thị bản dịch thay vì thông báo “Không thể dịch”.
+- 📜 Khi bạn cuộn lên trong một cuộc hội thoại dài, câu trả lời mới không còn bị giữ lại sau “Tải các tin nhắn mới hơn”, và khi cuộn xuống từ lịch sử cũ hơn, các tin nhắn mới hơn sẽ tự động được tải.
+- 🧭 Giao diện điện thoại không còn tùy chọn “Chuyển sang giao diện máy tính”, và các điện thoại đã chuyển trước đó sẽ tự động quay lại giao diện điện thoại.
+- 🧹 Bản ghi chạy của `vrun` được tự động xóa 24 giờ sau khi tác vụ kết thúc.
+
 ## v0.2.12 — 2026-10-20
 
 - 🛑 Dừng một lượt của Claude trong chế độ hội thoại có hiệu lực ngay, và tin nhắn tiếp theo được gửi đi luôn, kể cả khi máy tính đang tải nặng.

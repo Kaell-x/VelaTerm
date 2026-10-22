@@ -1,3 +1,12 @@
+## v0.2.13 — 2026-10-22
+
+- 📱 Sur téléphone, les agents exécutés dans la vue terminal s’ouvrent directement sur le terminal, avec une zone de saisie flottante pour rédiger ou dicter des messages entiers ; de petits boutons « Transcription » et « Terminal » dans l’en-tête permettent de passer de l’un à l’autre, et la transcription ne propose plus de passer à la vue conversation.
+- 🔑 Sur les connexions partagées, le propriétaire de l’hôte peut ouvrir le terminal des agents exécutés dans la vue terminal et y saisir du texte, et la liste des sessions affiche aussi les agents sans vue conversation, comme Kiro ; les comptes invités voient toujours une transcription en lecture seule.
+- 🌐 Traduire manuellement une réponse dans une session inactive affiche la traduction au lieu de « Traduction indisponible ».
+- 📜 Quand vous remontez dans une longue conversation, les nouvelles réponses ne restent plus bloquées derrière « Charger les messages plus récents », et redescendre depuis l’historique plus ancien charge automatiquement les messages plus récents.
+- 🧭 La vue téléphone ne propose plus « Passer à la version bureau », et les téléphones qui étaient passés à la version bureau reviennent automatiquement à la vue téléphone.
+- 🧹 Les enregistrements d’exécution de `vrun` sont supprimés automatiquement 24 heures après la fin de la tâche.
+
 ## v0.2.12 — 2026-10-20
 
 - 🛑 L’arrêt d’un tour Claude dans la vue conversation prend effet immédiatement, et votre message suivant part aussitôt, même lorsque l’ordinateur est très sollicité.

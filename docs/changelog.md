@@ -1,11 +1,20 @@
 # Changelog
 
-> Created: 2026-07-09 16:10 · Updated: 2026-10-20
+> Created: 2026-07-09 16:10 · Updated: 2026-10-22
 
 All notable changes to VelaTerm are documented here, newest first.
 v0.1.91 is the first public release; earlier version numbers were internal iterations and are not covered.
 
 ---
+
+## v0.2.13 — 2026-10-22
+
+- 📱 On phones, agents running in terminal view open straight to the terminal, with a floating input box for writing or dictating whole messages; small Transcript and Terminal buttons in the header switch between the two, and the transcript no longer suggests switching to conversation view.
+- 🔑 On shared connections, the host's owner can open and type in the terminals of agents running in terminal view, and the session list also shows agents without a conversation view, such as Kiro; invited accounts still see a read-only transcript.
+- 🌐 Manually translating a reply in an idle session shows the translation instead of Translation is unavailable.
+- 📜 While you scroll up in a long conversation, new replies are no longer held back behind Load newer messages, and scrolling down from earlier history loads newer messages automatically.
+- 🧭 The phone view no longer offers Switch to desktop, and phones that switched earlier return to the phone view automatically.
+- 🧹 `vrun` run records are deleted automatically 24 hours after the task ends.
 
 ## v0.2.12 — 2026-10-20
 

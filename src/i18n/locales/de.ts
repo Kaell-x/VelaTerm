@@ -1756,18 +1756,17 @@ const de: typeof en = {
   "mobile.inputOptions": "Nachrichtenoptionen",
   "mobile.connections": "Verbindungen verwalten",
   "mobile.more": "Weitere Aktionen",
-  "mobile.toDesktop": "Zur Desktop-Version wechseln", // Switch to desktop
   "mobile.empty1": "Keine Sitzungen.", // No sessions.
   "mobile.noMatch": "Keine passenden Sitzungen", // No matching sessions
   "mobile.empty2":
     "Erstellen Sie eine Sitzung in der Desktop-App oder im Browser auf einem Computer. Sie erscheint hier automatisch.", // Create one on the desktop app or a computer browser…
   "mobile.back": "‹ Zurück", // ‹ Back
-  "mobile.tuiSuggest": "Diese Sitzung läuft in der Terminalansicht. Auf dem Smartphone ist die Gesprächsansicht besser geeignet.", // This session runs in terminal view. Conversation view works better on a phone.
-  "mobile.tuiShareReadOnly": "Diese Sitzung läuft in der Terminalansicht. Sie können sie hier lesen, aber nicht antworten. Wechseln Sie zur Gesprächsansicht, um fortzufahren.", // This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.
-  "mobile.tuiShareHost": "Diese Sitzung läuft in der Terminalansicht. Sie können sie hier lesen, aber nicht antworten. Der Besitzer des Hosts kann sie auf die Gesprächsansicht umstellen.", // This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.
-  "mobile.switchToConversation": "Zur Gesprächsansicht wechseln", // Switch to conversation view
   "mobile.selCopy": "Kopieren", // Copy
   "mobile.selCancel": "Abbrechen", // Cancel
+  "mobile.compose": "Nachricht verfassen",
+  "mobile.composePlaceholder": "Nachricht an das Terminal verfassen",
+  "mobile.showTranscript": "Transkript",
+  "mobile.showTerminal": "Terminal",
 
   // ── Mobile connection client (apps/mobile start page) ──
   "mobile.phaseConnecting": "SSH-Verbindung wird aufgebaut…", // Connecting over SSH…
@@ -1987,8 +1986,6 @@ const de: typeof en = {
   "session.switchBody": "Der laufende Zug wird abgebrochen. Das Gespräch bleibt erhalten.",
   "session.switchBodyBackground": "Vom Agenten gestartete Hintergrundaufgaben werden möglicherweise beendet, und der Agent erfährt nicht, wann sie fertig sind. Das Gespräch bleibt erhalten.",
   "session.switchConfirm": "Wechseln",
-  "session.switchBodyIdle": "Der Agent im Terminal wird beendet und in der Gesprächsansicht fortgesetzt. Das Gespräch bleibt erhalten.", // The agent in the terminal stops and continues in conversation view. Your conversation is kept.
-  "session.switchDesktopNote": "Auch in der Desktop-App wird diese Sitzung dann in der Gesprächsansicht angezeigt.", // The desktop app will also show this session in conversation view.
   "session.terminalViewHint": "Klicken Sie hier, um zur Terminalansicht zurückzukehren.",
   "session.loading": "Gespräch wird gelesen…",
   "session.unavailable": "Dieses Gespräch lässt sich noch nicht lesen",

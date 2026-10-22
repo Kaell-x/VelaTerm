@@ -1769,18 +1769,17 @@ const ru: typeof en = {
   "mobile.inputOptions": "Параметры сообщения",
   "mobile.connections": "Управление подключениями",
   "mobile.more": "Другие действия",
-  "mobile.toDesktop": "Перейти к версии для ПК", // Switch to desktop
   "mobile.empty1": "Нет сеансов.", // No sessions.
   "mobile.noMatch": "Нет подходящих сеансов", // No matching sessions
   "mobile.empty2":
     "Создайте сеанс в настольном приложении или в браузере на компьютере. Он появится здесь автоматически.", // Create one on the desktop app or a computer browser…
   "mobile.back": "‹ Назад", // ‹ Back
-  "mobile.tuiSuggest": "Этот сеанс работает в виде терминала. На телефоне удобнее вид беседы.", // This session runs in terminal view. Conversation view works better on a phone.
-  "mobile.tuiShareReadOnly": "Этот сеанс работает в виде терминала, поэтому здесь его можно читать, но нельзя отвечать. Чтобы продолжить, переключитесь на вид беседы.", // This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.
-  "mobile.tuiShareHost": "Этот сеанс работает в виде терминала, поэтому здесь его можно читать, но нельзя отвечать. Владелец хоста может переключить его на вид беседы.", // This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.
-  "mobile.switchToConversation": "Переключить на вид беседы", // Switch to conversation view
   "mobile.selCopy": "Копировать", // Copy
   "mobile.selCancel": "Отмена", // Cancel
+  "mobile.compose": "Написать сообщение",
+  "mobile.composePlaceholder": "Введите сообщение для терминала",
+  "mobile.showTranscript": "Стенограмма",
+  "mobile.showTerminal": "Терминал",
 
   // ── Mobile connection client (apps/mobile start page) ──
   "mobile.phaseConnecting": "Подключение по SSH…",
@@ -2000,8 +1999,6 @@ const ru: typeof en = {
   "session.switchBody": "Текущий ход будет прерван. Разговор сохранится.",
   "session.switchBodyBackground": "Фоновые задачи, запущенные агентом, могут остановиться, и агент не узнает об их завершении. Разговор сохранится.",
   "session.switchConfirm": "Переключить",
-  "session.switchBodyIdle": "Агент в терминале будет остановлен и продолжит работу в виде беседы. Разговор сохранится.", // The agent in the terminal stops and continues in conversation view. Your conversation is kept.
-  "session.switchDesktopNote": "В настольном приложении этот сеанс тоже будет показан в виде беседы.", // The desktop app will also show this session in conversation view.
   "session.terminalViewHint": "Нажмите здесь, чтобы вернуться к виду терминала.",
   "session.loading": "Читаем беседу…",
   "session.unavailable": "Эту беседу пока не удаётся прочитать",

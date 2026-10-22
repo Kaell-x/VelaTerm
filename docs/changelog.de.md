@@ -1,3 +1,12 @@
+## v0.2.13 — 2026-10-22
+
+- 📱 Auf dem Smartphone öffnen sich Agenten in der Terminalansicht direkt im Terminal, mit einem schwebenden Eingabefeld, in dem Sie ganze Nachrichten schreiben oder diktieren können; kleine Schaltflächen „Transkript“ und „Terminal“ in der Kopfzeile wechseln zwischen beiden, und das Transkript schlägt nicht mehr den Wechsel zur Gesprächsansicht vor.
+- 🔑 Über geteilte Verbindungen kann der Besitzer des Hosts das Terminal von Agenten in der Terminalansicht öffnen und darin tippen, und die Sitzungsliste zeigt auch Agenten ohne Gesprächsansicht wie Kiro; eingeladene Konten sehen weiterhin ein schreibgeschütztes Transkript.
+- 🌐 Wenn Sie eine Antwort in einer inaktiven Sitzung manuell übersetzen, erscheint die Übersetzung statt „Die Übersetzung ist nicht verfügbar“.
+- 📜 Während Sie in einem langen Gespräch nach oben scrollen, landen neue Antworten nicht mehr hinter „Neuere Nachrichten laden“, und beim Herunterscrollen aus älterem Verlauf werden neuere Nachrichten automatisch geladen.
+- 🧭 Die Smartphone-Ansicht bietet „Zur Desktop-Version wechseln“ nicht mehr an, und Smartphones, die früher gewechselt haben, kehren automatisch zur Smartphone-Ansicht zurück.
+- 🧹 Laufaufzeichnungen von `vrun` werden 24 Stunden nach dem Ende der Aufgabe automatisch gelöscht.
+
 ## v0.2.12 — 2026-10-20
 
 - 🛑 Das Stoppen eines Claude-Durchgangs in der Gesprächsansicht wirkt sofort, und Ihre nächste Nachricht wird direkt gesendet – auch wenn der Computer stark ausgelastet ist.

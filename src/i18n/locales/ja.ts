@@ -1753,18 +1753,17 @@ const ja: typeof en = {
   "mobile.inputOptions": "入力オプション",
   "mobile.connections": "接続管理",
   "mobile.more": "その他の操作",
-  "mobile.toDesktop": "デスクトップ版に切り替え", // Switch to desktop
   "mobile.empty1": "セッションがありません。", // No sessions.
   "mobile.noMatch": "一致するセッションがありません", // No matching sessions
   "mobile.empty2":
     "デスクトップ版か PC ブラウザで作成すると、ここに自動で表示されます。", // Create one on the desktop app or a computer browser…
   "mobile.back": "‹ 戻る", // ‹ Back
-  "mobile.tuiSuggest": "このセッションはターミナルビューで動作しています。スマートフォンでは会話ビューのほうが使いやすくなります。", // This session runs in terminal view. Conversation view works better on a phone.
-  "mobile.tuiShareReadOnly": "このセッションはターミナルビューで動作しているため、ここでは閲覧のみで返信はできません。続けるには会話ビューに切り替えてください。", // This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.
-  "mobile.tuiShareHost": "このセッションはターミナルビューで動作しているため、ここでは閲覧のみで返信はできません。ホストの所有者が会話ビューに切り替えることができます。", // This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.
-  "mobile.switchToConversation": "会話ビューに切り替える", // Switch to conversation view
   "mobile.selCopy": "コピー", // Copy
   "mobile.selCancel": "キャンセル", // Cancel
+  "mobile.compose": "メッセージを作成",
+  "mobile.composePlaceholder": "ターミナルに送信するメッセージを入力",
+  "mobile.showTranscript": "履歴",
+  "mobile.showTerminal": "ターミナル",
 
   // ── Mobile connection client (apps/mobile start page) ──
   "mobile.phaseConnecting": "SSH で接続中…",
@@ -1984,8 +1983,6 @@ const ja: typeof en = {
   "session.switchBody": "進行中のターンは中断されます。会話の内容は残ります。",
   "session.switchBodyBackground": "エージェントが開始したバックグラウンドタスクは停止する場合があり、終了してもエージェントには通知されません。会話の内容は残ります。",
   "session.switchConfirm": "切り替える",
-  "session.switchBodyIdle": "ターミナルのエージェントは停止し、会話ビューで続行します。会話の内容は残ります。", // The agent in the terminal stops and continues in conversation view. Your conversation is kept.
-  "session.switchDesktopNote": "デスクトップ版でも、このセッションは会話ビューに切り替わります。", // The desktop app will also show this session in conversation view.
   "session.terminalViewHint": "ここをクリックすると、ターミナルビューに戻れます。",
   "session.loading": "会話を読み込んでいます…",
   "session.unavailable": "この会話はまだ読み取れません",

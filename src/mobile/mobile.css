@@ -287,6 +287,51 @@
   letter-spacing: 0.5px;
 }
 
+/* ── Terminal message box ── */
+/* Sits in the page flow between the terminal and KeyBar so it never covers the TUI's own prompt line;
+   the terminal gives up the height. The textarea grows with its text up to about six lines. */
+.m-compose {
+  flex: none;
+  margin: 6px 8px 0;
+  padding: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.m-compose:focus-within { border-color: var(--accent-line); }
+.m-compose-row { display: flex; align-items: flex-end; gap: 6px; }
+.m-compose textarea {
+  flex: 1;
+  min-width: 0;
+  max-height: 9.6em;
+  padding: 7px 4px;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  /* 16px or more keeps iOS from zooming the page when the textarea gains focus. */
+  font-size: 16px;
+  line-height: 1.5;
+}
+.m-compose-btn {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--bg-1);
+  color: var(--text-mid);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-compose-send { background: var(--accent); color: var(--bg-0); }
+.m-compose-send:disabled { opacity: 0.45; }
+.m-compose-error { margin: 0 4px 6px; font-size: 13px; color: var(--status-error); }
+
 /* ── KeyBar shortcut toolbar ── */
 .m-keybar-wrap {
   flex: none;
@@ -385,11 +430,6 @@
 .m-recorded-composer textarea { outline: none; }
 .m-recorded-composer:focus-within { border-color: var(--accent-line); }
 
-/* Suggests the conversation view for a terminal-view agent; on a share it replaces the composer. */
-.m-recorded-switch { margin: 8px 12px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-2); display: flex; align-items: center; gap: 12px; font-size: 14px; line-height: 1.5; color: var(--text-secondary); }
-.m-recorded-switch p { flex: 1; min-width: 0; margin: 0; }
-.m-recorded-switch .vlx-btn { flex: none; min-height: 44px; }
-.m-recorded-switch:last-child { margin-bottom: max(12px, env(safe-area-inset-bottom)); }
 
 .m-recorded-input { display: flex; align-items: flex-start; gap: 8px; }
 .m-recorded-input textarea { flex: 1; min-width: 0; }

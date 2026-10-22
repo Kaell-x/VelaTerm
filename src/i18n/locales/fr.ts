@@ -1766,18 +1766,17 @@ const fr: typeof en = {
   "mobile.inputOptions": "Options du message",
   "mobile.connections": "Gérer les connexions",
   "mobile.more": "Autres actions",
-  "mobile.toDesktop": "Passer à la version bureau", // Switch to desktop
   "mobile.empty1": "Aucune session.", // No sessions.
   "mobile.noMatch": "Aucune session correspondante", // No matching sessions
   "mobile.empty2":
     "Créez une session dans l’application de bureau ou dans le navigateur d’un ordinateur. Elle apparaîtra ici automatiquement.", // Create one on the desktop app or a computer browser…
   "mobile.back": "‹ Retour", // ‹ Back
-  "mobile.tuiSuggest": "Cette session s’exécute dans la vue terminal. Sur un téléphone, la vue conversation est plus pratique.", // This session runs in terminal view. Conversation view works better on a phone.
-  "mobile.tuiShareReadOnly": "Cette session s’exécute dans la vue terminal : vous pouvez la lire ici, mais pas y répondre. Passez à la vue conversation pour continuer.", // This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.
-  "mobile.tuiShareHost": "Cette session s’exécute dans la vue terminal : vous pouvez la lire ici, mais pas y répondre. Le propriétaire de l’hôte peut la passer en vue conversation.", // This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.
-  "mobile.switchToConversation": "Passer à la vue conversation", // Switch to conversation view
   "mobile.selCopy": "Copier", // Copy
   "mobile.selCancel": "Annuler", // Cancel
+  "mobile.compose": "Rédiger un message",
+  "mobile.composePlaceholder": "Rédigez un message à envoyer au terminal",
+  "mobile.showTranscript": "Transcription",
+  "mobile.showTerminal": "Terminal",
 
   // ── Mobile connection client (apps/mobile start page) ──
   "mobile.phaseConnecting": "Connexion SSH en cours…",
@@ -1998,8 +1997,6 @@ const fr: typeof en = {
   "session.switchBody": "Le tour en cours sera interrompu. La conversation est conservée.",
   "session.switchBodyBackground": "Les tâches en arrière-plan lancées par l'agent peuvent s'arrêter, et l'agent ne sera pas averti de leur fin. La conversation est conservée.",
   "session.switchConfirm": "Basculer",
-  "session.switchBodyIdle": "L’agent du terminal s’arrête et reprend dans la vue conversation. La conversation est conservée.", // The agent in the terminal stops and continues in conversation view. Your conversation is kept.
-  "session.switchDesktopNote": "L’application de bureau affichera elle aussi cette session dans la vue conversation.", // The desktop app will also show this session in conversation view.
   "session.terminalViewHint": "Cliquez ici pour revenir à la vue terminal.",
   "session.loading": "Lecture de la conversation…",
   "session.unavailable": "Cette conversation n'est pas encore lisible",

@@ -125,6 +125,42 @@ it("bounds the v2 window during live updates and process reset while retaining a
   view.unmount();expect(vi.mocked(invoke).mock.calls.some(([command,args]) => command === "chat_read_cancel" && args?.jobId === "index:owned")).toBe(true);
 });
 
+it("keeps live v2 rows for a reader scrolled up in a full window", async () => {
+  snapshotOverrides = { protocolVersion: 2, historyGeneration: "generation", coverage: "complete", rowsRevision: 1, startedAt: 1 };
+  const { container } = await mountPane();
+  act(() => eventCallback({ type: "rows", epoch: 1, revision: 2, rows: Array.from({ length: 240 }, (_,i) => ({ kind: "user" as const, id: `u-${i}`, text: `Message ${i}` })) }));
+  await waitFor(() => expect(cachedChat("s")?.rows).toHaveLength(240));
+  const scroll = container.querySelector<HTMLDivElement>(".sv-scroll")!;
+  let top = 500;
+  Object.defineProperties(scroll, {
+    scrollHeight: { get: () => 2000 }, clientHeight: { get: () => 400 },
+    scrollTop: { get: () => top, set: (value: number) => { top = value; } },
+  });
+  // The first event only records the new geometry; the second parks the reader above the end.
+  fireEvent.scroll(scroll);top = 500;fireEvent.scroll(scroll);
+  expect(container.querySelector(".sv-to-end")).toBeTruthy();
+  act(() => eventCallback({ type: "rows", epoch: 1, revision: 3, rows: [{ kind: "user", id: "reply", text: "Live reply" }] }));
+  await waitFor(() => expect(cachedChat("s")?.rows.at(-1)?.id).toBe("reply"));
+  expect(cachedChat("s")?.rows).toHaveLength(240);expect(cachedChat("s")?.rows[0].id).toBe("u-1");
+  expect(cachedChat("s")?.hasNewer).toBeFalsy();expect(screen.queryByText("Load newer messages")).toBeNull();
+});
+
+it("loads the following v2 page when the reader reaches the end of a parked window", async () => {
+  snapshotOverrides = { protocolVersion: 2, historyGeneration: "generation", coverage: "complete", hasNewer: true,
+    rows: [{ kind: "user", id: "parked", text: "Parked message" }] };
+  const previous = vi.mocked(invoke).getMockImplementation()!;
+  vi.mocked(invoke).mockImplementation((command,args) => command === "chat_snapshot" && (args?.window as { after?: string })?.after
+    ? Promise.resolve({ ...snapshotOverrides, pageKind: "history", hasNewer: false, rows: [{ kind: "user", id: "later", text: "Later message" }] }) as Promise<never> : previous(command,args));
+  const { container } = await mountPane();
+  await screen.findByText("Load newer messages");
+  const scroll = container.querySelector<HTMLDivElement>(".sv-scroll")!;
+  Object.defineProperties(scroll, { scrollHeight: { get: () => 1000 }, clientHeight: { get: () => 400 }, scrollTop: { get: () => 600, set: () => {} } });
+  // The first event only records the new geometry, as a layout change would; the second is the reader's.
+  fireEvent.scroll(scroll);fireEvent.scroll(scroll);
+  await screen.findByText("Later message");
+  expect(screen.queryByText("Load newer messages")).toBeNull();
+});
+
 it("restores a copied v2 paging link with the same subscription after browser navigation", async () => {
   window.history.replaceState(null,"","/?chatSession=s&chatBefore=boundary");
   const previous = vi.mocked(invoke).getMockImplementation()!;

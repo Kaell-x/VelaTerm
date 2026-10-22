@@ -330,11 +330,13 @@ svg { display: block; }
 .st-background { background: var(--cyan); }
 .st-idle { background: var(--text-faint); }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
-/* Unread notifications use a rippling status dot. Yellow matches the attention counts and filters. */
-.st-unread { background: var(--yellow); animation: unread-pulse 1s ease-in-out infinite; }
+/* Unread notifications use a rippling status dot. Yellow matches the attention counts and filters.
+   Only opacity and transform are animated, so the compositor runs the pulse; animating the glow repainted
+   the sidebar on every frame for as long as anything stayed unread. The glow fades and shrinks with it. */
+.st-unread { background: var(--yellow); box-shadow: 0 0 7px 1px color-mix(in oklch, var(--yellow) 60%, transparent); animation: unread-pulse 1s ease-in-out infinite; }
 @keyframes unread-pulse {
-  0%, 100% { opacity: 1;    transform: scale(1.25); box-shadow: 0 0 7px 1px color-mix(in oklch, var(--yellow) 60%, transparent); }
-  50%      { opacity: 0.45; transform: scale(0.7);  box-shadow: 0 0 0 0 color-mix(in oklch, var(--yellow) 0%, transparent); }
+  0%, 100% { opacity: 1;    transform: scale(1.25); }
+  50%      { opacity: 0.45; transform: scale(0.7); }
 }
 
 .inline-add { display: flex; align-items: center; gap: 6px; padding: 0 8px; height: var(--row-h); }

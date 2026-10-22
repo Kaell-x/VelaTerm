@@ -1706,17 +1706,16 @@ const zhTW: typeof en = {
   "mobile.inputOptions": "輸入選項",
   "mobile.connections": "連線管理",
   "mobile.more": "更多操作",
-  "mobile.toDesktop": "切換到桌面版", // Switch to desktop
   "mobile.empty1": "尚無工作階段。", // No sessions.
   "mobile.noMatch": "沒有符合的工作階段", // No matching sessions
   "mobile.empty2": "在桌面應用程式或電腦瀏覽器中建立工作階段後，此處會自動顯示。", // Create one on the desktop app or a computer browser…
   "mobile.back": "‹ 返回", // ‹ Back
-  "mobile.tuiSuggest": "這個工作階段以終端機檢視執行。在手機上使用會話檢視體驗更好。", // This session runs in terminal view. Conversation view works better on a phone.
-  "mobile.tuiShareReadOnly": "這個工作階段以終端機檢視執行，在這裡只能檢視，無法回覆。切換到會話檢視後即可繼續對話。", // This session runs in terminal view, so you can read it here but can't reply. Switch to conversation view to continue.
-  "mobile.tuiShareHost": "這個工作階段以終端機檢視執行，在這裡只能檢視，無法回覆。主機擁有者可以將它切換為會話檢視。", // This session runs in terminal view, so you can read it here but can't reply. The owner of the host can switch it to conversation view.
-  "mobile.switchToConversation": "切換到會話檢視", // Switch to conversation view
   "mobile.selCopy": "複製", // Copy
   "mobile.selCancel": "取消", // Cancel
+  "mobile.compose": "撰寫訊息",
+  "mobile.composePlaceholder": "輸入要送出到終端機的內容",
+  "mobile.showTranscript": "記錄",
+  "mobile.showTerminal": "終端機",
 
   // ── Mobile connection client (apps/mobile start page) ──
   "mobile.phaseConnecting": "正在透過 SSH 連線…", // Connecting over SSH…
@@ -1935,8 +1934,6 @@ const zhTW: typeof en = {
   "session.switchBody": "目前進行中的回合會中斷，對話內容不會遺失。",
   "session.switchBodyBackground": "智慧體啟動的背景工作可能會停止，工作結束時智慧體也不會收到通知。對話內容不會遺失。",
   "session.switchConfirm": "切換",
-  "session.switchBodyIdle": "終端機中的智慧體會停止，並在會話檢視中繼續執行。對話內容不會遺失。", // The agent in the terminal stops and continues in conversation view. Your conversation is kept.
-  "session.switchDesktopNote": "桌面應用程式中的這個工作階段也會切換為會話檢視。", // The desktop app will also show this session in conversation view.
   "session.terminalViewHint": "點選這裡即可切換回終端機檢視。",
   "session.loading": "正在讀取對話…",
   "session.unavailable": "暫時無法讀取此會話的對話內容",

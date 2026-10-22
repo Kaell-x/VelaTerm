@@ -1,4 +1,6 @@
-//! Public links expose agent conversations, never the generic remote terminal interface.
+//! Public links expose agent conversations, never the generic remote terminal interface. The host's own
+//! account may additionally open the live terminal of a terminal-view agent inside its share, as it can on
+//! the host; see `owner_terminal_session`. Plain shells and browser tabs stay out of every share.
 //! AI tools retain the host user's permissions; this policy is not an operating-system sandbox.
 
 use crate::db::repo;
@@ -32,9 +34,10 @@ impl ShareScope {
 
     /// Whether a session inside the scope is offered to the visitor. Conversation sessions are, and so are
     /// terminal-view agents whose kind has a conversation view: the visitor reads their record and may be
-    /// asked to switch them. Other agents would open into a terminal whose PTY commands are denied.
-    fn lists(&self, session: &Session) -> bool {
-        self.contains(session) && (session.engine == "chat" || session.kind.supports_chat())
+    /// asked to switch them. Other agents have no record to read, so only the owner, who can open their
+    /// terminal, sees them.
+    fn lists(&self, session: &Session, owner: bool) -> bool {
+        self.contains(session) && (session.engine == "chat" || session.kind.supports_chat() || owner)
     }
 
     /// Whether a session exists on the host and falls inside this scope. Used before registering per-session
@@ -55,7 +58,8 @@ impl ShareScope {
             let sessions = repo::list_all_sessions(&conn)?;
             let projects = repo::list_tree(&conn)?.projects;
             // Do not serialize Session directly: it contains paths, environment and launch arguments.
-            let visible: Vec<Value> = sessions.iter().filter(|s| self.lists(s)).map(|s| {
+            let owner = super::public_relay::visitor_is_owner(app, self);
+            let visible: Vec<Value> = sessions.iter().filter(|s| self.lists(s, owner)).map(|s| {
                 json!({"id":s.id,"name":s.name,"kind":s.kind,"engine":s.engine,
                     "projectId":s.project_id,"projectName":projects.iter().find(|p|p.id == s.project_id).map(|p|p.name.as_str()),
                     "canChat":s.engine == "chat" && s.kind.supports_chat()})
@@ -178,14 +182,25 @@ pub fn dispatch_shared(
             return Ok(json!({"enabled":false,"rev":0,"source":Value::Null,"state":Value::Null}))
         }
         "list_agent_presets" | "list_shells" => return Ok(json!([])),
-        // Lets the shared shell decide whether to offer the view switch below; the switch re-checks it.
+        // Lets the shared shell decide whether to offer the view switch and the live terminal; both
+        // re-check it on every call.
         "share_access" => {
-            return Ok(json!({"canSwitchEngine": super::public_relay::visitor_is_owner(app, scope)}))
+            let owner = super::public_relay::visitor_is_owner(app, scope);
+            return Ok(json!({"canSwitchEngine": owner, "canUseTerminal": owner}))
         }
         // Machine panels stay host-only; the shared session view has no use for them.
         "process_stats" | "system_stats" | "usage_refresh" | "model_catalog_refresh" | "list_dir"
         | "search_session_content" => return Err(unavailable()),
         _ => {}
+    }
+    // Keystrokes, size changes and redraws for a terminal the owner opened; see `owner_terminal_session`.
+    if matches!(cmd, "pty_write" | "pty_resize" | "pty_redraw") {
+        let sid = args
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .ok_or("Missing session ID")?;
+        owner_terminal_session(app, scope, sid)?;
+        return super::dispatch::dispatch(app, cmd, args, who, origin);
     }
     if !app_command(cmd) {
         return Err(unavailable());
@@ -213,7 +228,9 @@ pub fn dispatch_shared(
     if !scope.contains(&session) {
         return Err("Session is outside the shared scope".into());
     }
-    if cmd == "mobile_notification_preview" || (cmd == "session_mark_read" && scope.lists(&session)) {
+    if cmd == "mobile_notification_preview"
+        || (cmd == "session_mark_read" && scope.lists(&session, super::public_relay::visitor_is_owner(app, scope)))
+    {
         return super::dispatch::dispatch(app, cmd, args, who, origin);
     }
     // Only the host's own account may move a terminal-view agent into the conversation view, and only in
@@ -248,6 +265,28 @@ pub fn dispatch_shared(
         args.clone()
     };
     super::dispatch::dispatch(app, cmd, &safe_args, who, origin)
+}
+
+/// The session whose live terminal a share connection may open, attach to and type into. Only the host's
+/// own account qualifies, and only for terminal-view agents inside the scope; `contains` already keeps plain
+/// shells and browser tabs out. The session is returned so the caller launches it from host records rather
+/// than from client-supplied paths or commands.
+pub fn owner_terminal_session(
+    app: &AppCtx,
+    scope: &ShareScope,
+    session_id: &str,
+) -> Result<Session, String> {
+    if !super::public_relay::visitor_is_owner(app, scope) {
+        return Err(unavailable());
+    }
+    let session = {
+        let conn = app.db().conn.lock().map_err(|_| "Database unavailable")?;
+        repo::get_session(&conn, session_id)?.ok_or("Session unavailable")?
+    };
+    if !scope.contains(&session) || session.engine == "chat" {
+        return Err(unavailable());
+    }
+    Ok(session)
 }
 
 fn readonly_history(cmd:&str,args:&Value) -> bool {
@@ -342,7 +381,8 @@ fn app_command(cmd: &str) -> bool {
 fn filtered_tree(app: &AppCtx, scope: &ShareScope) -> Result<Value, String> {
     let tree = crate::command_core::list_tree(app)?;
     // Terminal-view agents appear only when they have a conversation view; see `ShareScope::lists`.
-    let allowed: Vec<&Session> = tree.sessions.iter().filter(|s| scope.lists(s)).collect();
+    let owner = super::public_relay::visitor_is_owner(app, scope);
+    let allowed: Vec<&Session> = tree.sessions.iter().filter(|s| scope.lists(s, owner)).collect();
     let project_ids: std::collections::HashSet<&str> =
         allowed.iter().map(|s| s.project_id.as_str()).collect();
     let group_by_id: std::collections::HashMap<&str, &crate::models::Group> =
@@ -396,10 +436,11 @@ fn filtered_tree(app: &AppCtx, scope: &ShareScope) -> Result<Value, String> {
 /// Filters the host state snapshot down to sessions inside the scope.
 fn filtered_session_states(app: &AppCtx, scope: &ShareScope) -> Result<Value, String> {
     let tree = crate::command_core::list_tree(app)?;
+    let owner = super::public_relay::visitor_is_owner(app, scope);
     let allowed: std::collections::HashSet<&str> = tree
         .sessions
         .iter()
-        .filter(|s| scope.lists(s))
+        .filter(|s| scope.lists(s, owner))
         .map(|s| s.id.as_str())
         .collect();
     let states: std::collections::HashMap<String, crate::session_state::SessionState> =
@@ -705,7 +746,7 @@ mod shared_surface_tests {
         assert!(dispatch_shared(&app, &scope, "chat_send", &json!({"sessionId": tui.id, "text": "hi"}), "ws-test", origin).is_err());
         assert_eq!(
             dispatch_shared(&app, &scope, "share_access", &json!({}), "ws-test", origin).unwrap(),
-            json!({"canSwitchEngine": false})
+            json!({"canSwitchEngine": false, "canUseTerminal": false})
         );
         assert_eq!(
             dispatch_shared(&app, &scope, "set_session_engine", &json!({"sessionId": tui.id, "engine": "chat"}), "ws-test", origin).unwrap_err(),
@@ -714,6 +755,77 @@ mod shared_surface_tests {
         let conn = app.db().conn.lock().unwrap();
         assert_eq!(repo::get_session(&conn, &tui.id).unwrap().unwrap().engine, "tui");
         drop(conn);
+        drop(app);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The host's own account may open the live terminal of a terminal-view agent through its share and sees
+    /// agents that have no conversation view; an invited account still reads records only. Plain shells and
+    /// conversation-view sessions never get a terminal, even for the owner.
+    #[test]
+    fn only_the_owner_opens_terminal_view_agents() {
+        use crate::host::HeadlessHost;
+        let dir = std::env::temp_dir().join(format!("share-owner-tui-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = crate::db::Db::open(&dir.join("test.db")).unwrap();
+        let (project, tui, kiro, chat, shell) = {
+            let conn = db.conn.lock().unwrap();
+            let project = repo::create_virtual_project(&conn, "Shared").unwrap();
+            let tui = repo::create_session(&conn, &project.id, None, "Claude TUI", SessionKind::Claude, None, None, None, None, None).unwrap();
+            repo::set_session_engine(&conn, &tui.id, "tui").unwrap();
+            let kiro = repo::create_session(&conn, &project.id, None, "Kiro", SessionKind::Kiro, None, None, None, None, None).unwrap();
+            let chat = repo::create_session(&conn, &project.id, None, "Chat", SessionKind::Claude, None, None, None, None, None).unwrap();
+            repo::set_session_engine(&conn, &chat.id, "chat").unwrap();
+            let shell = repo::create_session(&conn, &project.id, None, "Shell", SessionKind::Terminal, None, None, None, None, None).unwrap();
+            (project, tui, kiro, chat, shell)
+        };
+        let config = json!({"origin":"https://example.invalid","deviceId":"d","token":"t","shares":{"g":{
+            "scope":"project","targetId":project.id,"secret":"s","passwordHash":null,
+            "allowedAccounts":["owner","guest"]}}});
+        std::fs::write(dir.join("vlx-public-sharing.json"), config.to_string()).unwrap();
+        let app = AppCtx::Headless(std::sync::Arc::new(HeadlessHost::new(dir.clone(), db)));
+        let visitor = |account: &str| ShareScope {
+            scope: "project".into(),
+            target_id: Some(project.id.clone()),
+            push_authority: Some(("g".into(), account.into())),
+        };
+        let (owner, guest) = (visitor("owner"), visitor("guest"));
+        let origin = crate::web::dispatch::CallOrigin::Remote;
+
+        assert_eq!(
+            dispatch_shared(&app, &owner, "share_access", &json!({}), "ws-test", origin).unwrap(),
+            json!({"canSwitchEngine": true, "canUseTerminal": true})
+        );
+        assert!(owner_terminal_session(&app, &owner, &tui.id).is_ok());
+        assert!(owner_terminal_session(&app, &owner, &kiro.id).is_ok());
+        assert_eq!(owner_terminal_session(&app, &owner, &chat.id).unwrap_err(), unavailable());
+        assert_eq!(owner_terminal_session(&app, &owner, &shell.id).unwrap_err(), unavailable());
+        // Keystrokes pass the policy for the owner; the session is not running here, so the PTY layer answers.
+        assert_ne!(
+            dispatch_shared(&app, &owner, "pty_write", &json!({"sessionId": tui.id, "data": "x"}), "ws-test", origin).unwrap_err(),
+            unavailable()
+        );
+        let tree = dispatch_shared(&app, &owner, "list_tree", &json!({}), "ws-test", origin).unwrap();
+        let mut ids: Vec<String> = tree["sessions"].as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap().to_string()).collect();
+        ids.sort();
+        let mut expected = vec![tui.id.clone(), kiro.id.clone(), chat.id.clone()];
+        expected.sort();
+        assert_eq!(ids, expected);
+
+        assert_eq!(
+            dispatch_shared(&app, &guest, "share_access", &json!({}), "ws-test", origin).unwrap(),
+            json!({"canSwitchEngine": false, "canUseTerminal": false})
+        );
+        assert_eq!(owner_terminal_session(&app, &guest, &tui.id).unwrap_err(), unavailable());
+        for cmd in ["pty_write", "pty_resize", "pty_redraw"] {
+            assert_eq!(
+                dispatch_shared(&app, &guest, cmd, &json!({"sessionId": tui.id, "data": "x", "cols": 80, "rows": 24}), "ws-test", origin).unwrap_err(),
+                unavailable(),
+                "{cmd} must stay closed to an invited account"
+            );
+        }
+        let tree = dispatch_shared(&app, &guest, "list_tree", &json!({}), "ws-test", origin).unwrap();
+        assert!(!tree["sessions"].as_array().unwrap().iter().any(|s| s["id"] == kiro.id));
         drop(app);
         std::fs::remove_dir_all(dir).unwrap();
     }

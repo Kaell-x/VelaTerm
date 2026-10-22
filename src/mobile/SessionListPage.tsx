@@ -28,7 +28,6 @@ import {
   type Session,
   type SessionId,
 } from "../types";
-import { applyViewOverride } from "./detect";
 
 /** Trailing type label: shell name for terminal sessions, kind for agent sessions. */
 function kindLabel(s: Session): string {
@@ -383,7 +382,6 @@ export function SessionListPage({ onOpen, loading=false, error=null, onRefresh }
           <div className="m-menu-items">
             <ConnectionMenuEntry />
             {onRefresh && <button type="button" disabled={loading} onClick={onRefresh}>{tr("common.refresh")}</button>}
-            <button type="button" onClick={()=>applyViewOverride("desktop")}>{tr("mobile.toDesktop")}</button>
           </div>
         </details>
       </header>

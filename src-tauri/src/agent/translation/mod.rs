@@ -403,11 +403,23 @@ pub fn forget_queued(app: &AppCtx,sid: &str,id: &str) -> Result<(),String> {
 }
 
 pub fn reply(app: &AppCtx,sid: &str,row: &str) -> Result<(),String> {
-    // Use the shared lookup so inactive conversations can replay their persisted history.
-    let detail=crate::command_core::chat_row(app,sid,row,None)?;
+    let detail=reply_row(app,sid,row)?;
     let value=detail.get("row").unwrap_or(&detail);
     if value["kind"]!="assistant" { return Err("translation:message".into()); }
     schedule_reply(app,sid,row,value["text"].as_str().unwrap_or_default(),value["streaming"]==true,false)
+}
+
+/// The row as the conversation pane shows it, so the translated text is exactly the text on screen.
+fn reply_row(app: &AppCtx,sid: &str,row: &str) -> Result<Value,String> {
+    // A running conversation keeps its own rows in memory.
+    if let Ok(detail)=app.chat().row_detail(sid,row,None) { return Ok(detail); }
+    // An idle conversation, and the earlier rows of a running one, are pages of the history index, whose
+    // row ids the compatibility replay never produces; that replay also refuses large recordings.
+    match crate::agent::history_store::children::prepare(app,sid,&[]).and_then(|branch|branch.manifest(row,0)) {
+        Ok(mut page)=>Ok(page["row"].take()),
+        // Agents without an indexed history are still shown from the compatibility replay.
+        Err(_)=>crate::command_core::chat_row(app,sid,row,None),
+    }
 }
 
 fn schedule_reply(app: &AppCtx,sid: &str,id: &str,original: &str,streaming: bool,auto: bool) -> Result<(),String> {

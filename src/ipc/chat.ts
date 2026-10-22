@@ -974,8 +974,13 @@ export function setSessionEngine(
   return invoke("set_session_engine", { sessionId, engine });
 }
 
-/** On a share connection: whether this visitor may move a terminal-view session to the conversation view. */
-export function shareAccess(): Promise<{ canSwitchEngine: boolean }> {
+/** On a share connection: whether this visitor may move a terminal-view session to the conversation view,
+ * and whether it may open the live terminal of a terminal-view agent. Both are the host's own account only. */
+export interface ShareAccess {
+  canSwitchEngine: boolean;
+  canUseTerminal: boolean;
+}
+export function shareAccess(): Promise<ShareAccess> {
   return invoke("share_access");
 }
 

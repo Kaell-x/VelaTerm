@@ -15,7 +15,7 @@ import { useT } from "../../../i18n";
 import { useTermStore } from "../../../store/termStore";
 import { effectiveStatus, type Session, type SessionEngine } from "../../../types";
 
-export function useEngineSwitch(session: Session, { fromPhone = false }: { fromPhone?: boolean } = {}) {
+export function useEngineSwitch(session: Session) {
   const t = useT();
   const status = useTermStore((s) => effectiveStatus(s.runtimes[session.id]));
   // The engine waiting on an answer, or null when nothing is being asked.
@@ -36,7 +36,7 @@ export function useEngineSwitch(session: Session, { fromPhone = false }: { fromP
   };
 
   const switchTo = (engine: SessionEngine) => {
-    if (fromPhone || status === "working" || status === "background") setAsking(engine);
+    if (status === "working" || status === "background") setAsking(engine);
     else apply(engine);
   };
 
@@ -65,10 +65,8 @@ export function useEngineSwitch(session: Session, { fromPhone = false }: { fromP
           <div className="quit-head">
             <div className="quit-title">{t("session.switchTitle")}</div>
             <div className="quit-body">
-              {t(status === "background" ? "session.switchBodyBackground"
-                : status === "working" ? "session.switchBody" : fromPhone ? "session.switchBodyIdle" : "session.switchBody")}
+              {t(status === "background" ? "session.switchBodyBackground" : "session.switchBody")}
             </div>
-            {fromPhone && <div className="quit-body">{t("session.switchDesktopNote")}</div>}
           </div>
           <div className="quit-foot">
             <button className="quit-btn ghost" onClick={() => setAsking(null)}>
