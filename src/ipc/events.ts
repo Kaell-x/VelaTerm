@@ -316,6 +316,8 @@ export interface FsChange {
   dirs: string[] | null;
   /** Something in git's own files changed, which moves status and badges. */
   git: boolean;
+  /** HEAD/references changed. Older servers omit this; focus/polling still refresh branches. */
+  branch?: boolean;
 }
 
 export function onFsChanged(cb: (event: FsChange) => void): Promise<UnlistenFn> {

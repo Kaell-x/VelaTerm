@@ -56,7 +56,7 @@ export function ChildConversation({ row, renderRows }: { row: ChatRow; renderRow
   return <div className="sv-subagent" ref={section}>
     {page?.hasMore && <button className="vlx-btn" disabled={loading} onClick={()=>void load("before")}>{t("chat.sync.history")}</button>}
     {error && <div role="alert">{error}<button className="vlx-btn" disabled={loading} onClick={()=>void load()}>{t("common.retry")}</button></div>}
-    {page?.coverage==="partial" || loading && !page ? <div role="status">{t("chat.history.indexing")}</div> : null}
+    {page?.coverage==="partial" || loading && !page ? <div className="sv-sync-state sv-loading-hint" role="status">{t("chat.history.indexing")}</div> : null}
     {page && renderRows(page.rows)}
     {page?.hasNewer && <button className="vlx-btn" disabled={loading} onClick={()=>void load("after")}>{t("chat.history.newer")}</button>}
   </div>;

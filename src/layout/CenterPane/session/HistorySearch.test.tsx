@@ -35,7 +35,7 @@ it("continues bounded empty pages and preserves an incomplete coverage result", 
     .mockResolvedValueOnce({ hits: [], jobId: "j", coverage: "partial", nextCursor: null, scannedBytes: 200 });
   render(<HistorySearch sessionId="s" onLocate={vi.fn()} onClose={vi.fn()} />);
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "needle" } });
-  await screen.findByText("History is still being indexed");
+  await screen.findByText("Loading conversation…");
   expect(chatSearch).toHaveBeenCalledTimes(2);
   expect(chatSearch).toHaveBeenLastCalledWith("s", "needle", "j.1");
   expect(screen.queryByText("No results")).toBeNull();

@@ -1,3 +1,13 @@
+## v0.2.14 — 2026-10-23
+
+- 🔌 Kết nối từ xa không còn ngắt và kết nối lại mỗi giây khi đang mở nhiều cuộc hội thoại dài, nên các cuộc hội thoại đó lại mở được bình thường.
+- ⏹️ Khi đang kết nối SSH và WSL, nút “Dừng” sẽ hiện ra để bạn dừng ở bất kỳ giai đoạn nào, kể cả khi đang chuẩn bị máy chủ; trong lúc kết nối, nút “Hủy” trong hộp thoại mật khẩu cũng dừng kết nối.
+- 🌿 Cây phiên và nhãn nhánh không còn làm dồn ứ các tiến trình Git trong kho lớn, và các lượt đọc Git chạy nền sẽ dừng sau 30 giây thay vì bị treo.
+- 🧩 Bảng Git làm mới nhanh hơn nhiều trong các kho có submodule: chỉnh sửa bên trong một submodule không còn khiến submodule đó xuất hiện trong kho cha, còn submodule trỏ tới commit mới vẫn được liệt kê.
+- 📁 Có thể kéo nhóm sang dự án khác cùng với các nhóm lồng nhau và phiên bên trong, và sau đó các phiên này sẽ khởi động trong thư mục của dự án mới.
+- ⏳ Khi mở một cuộc hội thoại dài, chỉ báo nhỏ “Đang tải cuộc trò chuyện…” sẽ hiện ra thay cho “Lịch sử vẫn đang được lập chỉ mục”.
+- 🖱️ Menu ngữ cảnh của phiên hiển thị “Dừng tiến trình” khi tiến trình của phiên đang chạy, kể cả tiến trình được khởi động từ một máy khách khác, và ẩn mục này khi tiến trình đã kết thúc.
+
 ## v0.2.13 — 2026-10-22
 
 - 📱 Trên điện thoại, các tác tử chạy ở chế độ terminal mở thẳng vào terminal, kèm ô nhập nổi để soạn hoặc đọc chính tả cả tin nhắn; các nút nhỏ “Bản ghi” và “Terminal” ở đầu trang dùng để chuyển qua lại giữa hai màn hình, và bản ghi không còn gợi ý chuyển sang chế độ hội thoại.

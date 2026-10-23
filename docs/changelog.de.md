@@ -1,3 +1,13 @@
+## v0.2.14 — 2026-10-23
+
+- 🔌 Remote-Verbindungen brechen nicht mehr jede Sekunde ab und verbinden sich neu, wenn mehrere lange Gespräche geöffnet sind; diese Gespräche lassen sich wieder normal öffnen.
+- ⏹️ SSH- und WSL-Verbindungen zeigen während des Verbindungsaufbaus die Schaltfläche „Abbrechen“, mit der Sie in jeder Phase abbrechen können, auch während der Server vorbereitet wird; während einer laufenden Verbindung bricht auch „Abbrechen“ im Passwortdialog sie ab.
+- 🌿 Sitzungsbaum und Branch-Anzeigen häufen in großen Repositorys keine Git-Prozesse mehr an, und Git-Lesevorgänge im Hintergrund werden nach 30 Sekunden beendet, statt hängen zu bleiben.
+- 🧩 Das Git-Panel aktualisiert sich in Repositorys mit Submodulen deutlich schneller: Änderungen innerhalb eines Submoduls führen nicht mehr dazu, dass es im übergeordneten Repository aufgeführt wird; ein Submodul, das auf einen neuen Commit zeigt, wird weiterhin aufgeführt.
+- 📁 Gruppen lassen sich in andere Projekte ziehen und nehmen ihre verschachtelten Gruppen und Sitzungen mit; diese Sitzungen starten danach im Ordner des neuen Projekts.
+- ⏳ Beim Öffnen eines langen Gesprächs erscheint eine kleine Anzeige „Unterhaltung wird geladen…“ statt „Der Verlauf wird noch indexiert“.
+- 🖱️ Das Kontextmenü einer Sitzung zeigt „Prozess beenden“, solange der Prozess der Sitzung läuft – auch wenn er von einem anderen Client gestartet wurde –, und blendet den Eintrag aus, sobald der Prozess beendet ist.
+
 ## v0.2.13 — 2026-10-22
 
 - 📱 Auf dem Smartphone öffnen sich Agenten in der Terminalansicht direkt im Terminal, mit einem schwebenden Eingabefeld, in dem Sie ganze Nachrichten schreiben oder diktieren können; kleine Schaltflächen „Transkript“ und „Terminal“ in der Kopfzeile wechseln zwischen beiden, und das Transkript schlägt nicht mehr den Wechsel zur Gesprächsansicht vor.

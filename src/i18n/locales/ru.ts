@@ -1004,6 +1004,7 @@ const ru: typeof en = {
   "connect.portPlaceholder": "Порт", // Port
   "connect.connecting": "Подключение…", // Connecting…
   "connect.connect": "Подключиться", // Connect
+  "connect.stop": "Остановить",
   "connect.stagePreparing": "Подготовка сервера…",
   "connect.stageTransferring": "Передача сервера…",
   "connect.stageStarting": "Запуск сервера…",
@@ -2450,7 +2451,7 @@ const ru: typeof en = {
   "chat.history.copyPart": "Копировать эту часть",
 
   "chat.history.searchMore": "Другие результаты",
-  "chat.history.indexing": "Индексирование истории ещё выполняется",
+  "chat.history.indexing": "Загрузка разговора…",
   "chat.history.newer": "Загрузить более новые сообщения",
 
   "chat.history.copyComplete": "Копировать полное содержимое",
@@ -2463,7 +2464,7 @@ const ru: typeof en = {
   "export.preparing": "Подготовка экспорта сеанса…",
   "chat.history.windowLimit": "Это сообщение превышает предел отображения. Загрузите полный текст для чтения или скачайте его в виде файла.",
 
-  "chat.history.incomplete": "История неполная или её индекс ещё создаётся. Повторите попытку, когда источники станут доступны.",
+  "chat.history.incomplete": "Разговор ещё не загрузился полностью. Повторите попытку чуть позже.",
   "chat.history.indexBusy": "Индекс истории используется другим процессом. Повторите попытку через некоторое время.",
   "chat.history.unsupported": "Формат некоторых записей истории не поддерживается. Их исходное содержимое сохранено.",
   "chat.history.canceled": "Чтение истории отменено.",

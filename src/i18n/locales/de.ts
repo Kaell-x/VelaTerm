@@ -995,6 +995,7 @@ const de: typeof en = {
   "connect.portPlaceholder": "Port", // Port
   "connect.connecting": "Verbinde…", // Connecting…
   "connect.connect": "Verbinden", // Connect
+  "connect.stop": "Abbrechen",
   "connect.stagePreparing": "Server wird vorbereitet…",
   "connect.stageTransferring": "Server wird übertragen…",
   "connect.stageStarting": "Server wird gestartet…",
@@ -2433,7 +2434,7 @@ const de: typeof en = {
   "chat.history.copyPart": "Diesen Teil kopieren",
 
   "chat.history.searchMore": "Weitere Ergebnisse",
-  "chat.history.indexing": "Der Verlauf wird noch indexiert",
+  "chat.history.indexing": "Unterhaltung wird geladen…",
   "chat.history.newer": "Neuere Nachrichten laden",
 
   "chat.history.copyComplete": "Vollständigen Inhalt kopieren",
@@ -2446,7 +2447,7 @@ const de: typeof en = {
   "export.preparing": "Sitzungsexport wird vorbereitet…",
   "chat.history.windowLimit": "Diese Nachricht überschreitet die Anzeigegrenze. Laden Sie den vollständigen Inhalt zum Lesen oder als Datei herunter.",
 
-  "chat.history.incomplete": "Der Verlauf ist unvollständig oder wird noch indiziert. Versuchen Sie es erneut, sobald die Quellen verfügbar sind.",
+  "chat.history.incomplete": "Die Unterhaltung ist noch nicht vollständig geladen. Versuchen Sie es gleich noch einmal.",
   "chat.history.indexBusy": "Ein anderer Prozess verwendet den Verlaufsindex. Versuchen Sie es in Kürze erneut.",
   "chat.history.unsupported": "Einige Verlaufsformate werden nicht unterstützt. Die ursprünglichen Inhalte wurden aufbewahrt.",
   "chat.history.canceled": "Das Laden des Verlaufs wurde abgebrochen.",

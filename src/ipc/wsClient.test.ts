@@ -315,3 +315,41 @@ describe("wsClient superseded-socket isolation", () => {
     expect(reconnect.pending.size).toBe(0);
   });
 });
+
+describe("wsClient reconnect backoff", () => {
+  type BackoffInternals = ReconnectInternals & {
+    reconnectAttempts: number;
+    goOnline: (ws: FakeWebSocket) => void;
+  };
+  const backoff = wsClient as unknown as BackoffInternals;
+
+  afterEach(() => {
+    vi.useRealTimers();
+    backoff.ws = null;
+    backoff.reconnectAttempts = 0;
+    backoff.everConnected = false;
+  });
+
+  it("keeps backing off when every connection is closed right after it opens", () => {
+    vi.useFakeTimers();
+    const ws = new FakeWebSocket("ws://host/ws");
+    backoff.ws = ws;
+    backoff.reconnectAttempts = 3;
+    backoff.goOnline(ws);
+    // A server that drops each new connection must not reset the delay back to one second.
+    expect(backoff.reconnectAttempts).toBe(3);
+    backoff.ws = null;
+    vi.advanceTimersByTime(10_000);
+    expect(backoff.reconnectAttempts).toBe(3);
+  });
+
+  it("resets the backoff once the connection has stayed up", () => {
+    vi.useFakeTimers();
+    const ws = new FakeWebSocket("ws://host/ws");
+    backoff.ws = ws;
+    backoff.reconnectAttempts = 3;
+    backoff.goOnline(ws);
+    vi.advanceTimersByTime(10_000);
+    expect(backoff.reconnectAttempts).toBe(0);
+  });
+});

@@ -126,6 +126,18 @@ describe("ending a session process", () => {
     view.unmount();
   });
 
+  it.each([
+    [{ status: "idle", alive: true }, true],
+    [{ status: "running", alive: false }, false],
+    [{ status: "running" }, true],
+    [{ status: "idle" }, false],
+  ] as const)("offers Kill Process for runtime %o: %s", (runtime, offered) => {
+    testState.state.runtimes = { [node.id]: runtime };
+    const { result } = renderHook(() => useSessionMenu());
+    const labels = result.current.buildSessionItems(node).map(item => item.label);
+    expect(labels.includes("tree.killProcess")).toBe(offered);
+  });
+
   it.each(["cancel", "escape"])("does not stop the process after %s", (method) => {
     const { result } = renderHook(() => useSessionMenu());
     act(() => { result.current.buildSessionItems(node).find(item => item.label === "tree.killProcess")?.onClick?.({} as React.MouseEvent); });

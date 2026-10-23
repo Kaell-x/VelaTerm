@@ -1,3 +1,13 @@
+## v0.2.14 — 2026-10-23
+
+- 🔌 As conexões remotas não caem nem se reconectam mais a cada segundo quando várias conversas longas estão abertas, e essas conversas voltam a abrir normalmente.
+- ⏹️ As conexões SSH e WSL mostram um botão “Parar” durante a conexão, para interrompê-la em qualquer etapa, inclusive enquanto o servidor é preparado; durante uma conexão, “Cancelar” na caixa de diálogo de senha também a interrompe.
+- 🌿 A árvore de sessões e os rótulos de branch não acumulam mais processos do Git em repositórios grandes, e as leituras do Git em segundo plano são encerradas após 30 segundos em vez de ficarem travadas.
+- 🧩 O painel Git atualiza muito mais rápido em repositórios com submódulos: alterações dentro de um submódulo não fazem mais com que ele apareça no repositório principal, e um submódulo que aponta para um novo commit continua aparecendo.
+- 📁 Os grupos podem ser arrastados para outros projetos junto com seus grupos aninhados e suas sessões, que passam a iniciar na pasta do novo projeto.
+- ⏳ Ao abrir uma conversa longa, aparece um pequeno indicador “Carregando a conversa…” em vez de “O histórico ainda está sendo indexado”.
+- 🖱️ O menu de contexto da sessão mostra “Encerrar processo” enquanto o processo da sessão está em execução, inclusive quando foi iniciado por outro cliente, e deixa de mostrá-lo quando o processo termina.
+
 ## v0.2.13 — 2026-10-22
 
 - 📱 No celular, agentes em execução na visão de terminal abrem direto no terminal, com uma caixa de entrada flutuante para escrever ou ditar mensagens inteiras; os pequenos botões “Transcrição” e “Terminal” no cabeçalho alternam entre os dois, e a transcrição não sugere mais mudar para a visão de conversa.

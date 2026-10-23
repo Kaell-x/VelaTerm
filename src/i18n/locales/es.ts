@@ -997,6 +997,7 @@ const es: typeof en = {
   "connect.portPlaceholder": "Puerto", // Port
   "connect.connecting": "Conectando…", // Connecting…
   "connect.connect": "Conectar", // Connect
+  "connect.stop": "Detener",
   "connect.stagePreparing": "Preparando servidor…",
   "connect.stageTransferring": "Transfiriendo servidor…",
   "connect.stageStarting": "Iniciando servidor…",
@@ -2441,7 +2442,7 @@ const es: typeof en = {
   "chat.history.copyPart": "Copiar esta parte",
 
   "chat.history.searchMore": "Más resultados",
-  "chat.history.indexing": "Se está indexando el historial",
+  "chat.history.indexing": "Cargando la conversación…",
   "chat.history.newer": "Cargar mensajes más recientes",
 
   "chat.history.copyComplete": "Copiar el contenido completo",
@@ -2454,7 +2455,7 @@ const es: typeof en = {
   "export.preparing": "Preparando la exportación de la sesión…",
   "chat.history.windowLimit": "Este mensaje supera el límite de visualización. Cargue o descargue su contenido completo.",
 
-  "chat.history.incomplete": "El historial está incompleto o aún se está indexando. Vuelva a intentarlo cuando sus fuentes estén disponibles.",
+  "chat.history.incomplete": "La conversación aún no se ha cargado por completo. Vuelva a intentarlo en un momento.",
   "chat.history.indexBusy": "Otro proceso está usando el índice del historial. Vuelva a intentarlo dentro de unos instantes.",
   "chat.history.unsupported": "El formato de algunas entradas del historial no es compatible. Se ha conservado su contenido original.",
   "chat.history.canceled": "Se canceló la lectura del historial.",

@@ -130,7 +130,7 @@ function NodeMarkBadge({ mark }: { mark?: string | null }) {
 /** Worktree row tooltip with the live branch and full path; a component for the same reason as the badge below. */
 function WorktreeRowLabel({ path, name }: { path: string; name: string }) {
   const t = useT();
-  const branch = useGitBranch(path);
+  const branch = useGitBranch(path, false);
   return (
     <span className="nm" title={`${t("spawn.worktreeLabel")}: ${branch || name}\n${path}`}>
       {name}
@@ -143,7 +143,7 @@ function WorktreeRowLabel({ path, name }: { path: string; name: string }) {
  *  component because useGitBranch cannot be called inside renderRow's switch. SessionKindIcon handles session badges. */
 function GroupWorktreeBadge({ path }: { path: string }) {
   const t = useT();
-  const branch = useGitBranch(path);
+  const branch = useGitBranch(path, false);
   const leaf = path.split("/").filter(Boolean).pop() || path;
   const text = branch || leaf;
   return (
@@ -1131,7 +1131,7 @@ export function ProjectTree(h: TreeHandlers) {
       if (p.kind === "session") {
         void moveNode("session", p.id, target.projectId, target.id, null, Date.now());
       } else {
-        if (p.projectId !== target.projectId) return;
+        // Groups may change project; the backend re-homes their nested groups and sessions with them.
         if (isInSubtree(p.id, target)) return;
         void moveNode("group", p.id, target.projectId, target.id, null, Date.now());
       }
@@ -1147,7 +1147,6 @@ export function ProjectTree(h: TreeHandlers) {
       .sort((a, b) => a.sortOrder - b.sortOrder);
     const order = sortBetween(siblings, target.id, zone === "top" ? "before" : "after");
     if (p.kind === "group") {
-      if (p.projectId !== target.projectId) return;
       if (isInSubtree(p.id, target)) return;
       void moveNode("group", p.id, target.projectId, target.parentGroupId ?? null, null, order);
     } else {
@@ -1182,7 +1181,6 @@ export function ProjectTree(h: TreeHandlers) {
       if (p.kind === "session") {
         void moveNode("session", p.id, projectId, null, null, Date.now());
       } else {
-        if (p.projectId !== projectId) return;
         void moveNode("group", p.id, projectId, null, null, Date.now());
       }
       return;
@@ -1191,7 +1189,6 @@ export function ProjectTree(h: TreeHandlers) {
     if (p.kind === "session") {
       void moveNode("session", p.id, projectId, null, null, Date.now());
     } else {
-      if (p.projectId !== projectId) return;
       void moveNode("group", p.id, projectId, null, null, Date.now());
     }
   };

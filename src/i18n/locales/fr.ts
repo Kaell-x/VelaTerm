@@ -997,6 +997,7 @@ const fr: typeof en = {
   "connect.portPlaceholder": "Port", // Port
   "connect.connecting": "Connexion…", // Connecting…
   "connect.connect": "Se connecter", // Connect
+  "connect.stop": "Arrêter",
   "connect.stagePreparing": "Préparation du serveur…",
   "connect.stageTransferring": "Transfert du serveur…",
   "connect.stageStarting": "Démarrage du serveur…",
@@ -2444,7 +2445,7 @@ const fr: typeof en = {
   "chat.history.copyPart": "Copier cette partie",
 
   "chat.history.searchMore": "Autres résultats",
-  "chat.history.indexing": "L’indexation de l’historique est en cours",
+  "chat.history.indexing": "Chargement de la conversation…",
   "chat.history.newer": "Charger les messages plus récents",
 
   "chat.history.copyComplete": "Copier le contenu complet",
@@ -2457,7 +2458,7 @@ const fr: typeof en = {
   "export.preparing": "Préparation de l’exportation de la session…",
   "chat.history.windowLimit": "Ce message dépasse la limite d’affichage. Chargez ou téléchargez son contenu complet.",
 
-  "chat.history.incomplete": "L’historique est incomplet ou son indexation est en cours. Réessayez lorsque ses sources seront accessibles.",
+  "chat.history.incomplete": "La conversation n’est pas encore entièrement chargée. Réessayez dans un instant.",
   "chat.history.indexBusy": "L’index de l’historique est utilisé par un autre processus. Réessayez dans quelques instants.",
   "chat.history.unsupported": "Le format de certaines entrées de l’historique n’est pas pris en charge. Leur contenu original a été conservé.",
   "chat.history.canceled": "La lecture de l’historique a été annulée.",

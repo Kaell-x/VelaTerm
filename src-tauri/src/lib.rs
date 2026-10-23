@@ -16,6 +16,9 @@ mod focus_win;
 // Tauri command registry is compiled only for GUI builds.
 #[cfg(feature = "gui")]
 mod commands;
+// Cooperative cancellation for the SSH/WSL connect flows; server_supply polls it in the headless build too.
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+mod connect_cancel;
 #[cfg(feature = "gui")]
 mod window_layout;
 mod db;
@@ -1269,6 +1272,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             commands::ssh_trust_host,
             commands::ssh_connect,
             commands::wsl_connect,
+            commands::connect_cancel,
             commands::ssh_disconnect,
             // 5) Desktop-only built-in browser tabs.
             browser::browser_open,

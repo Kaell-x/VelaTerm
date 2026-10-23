@@ -2265,6 +2265,37 @@ fn creates_group_cycle(conn: &Connection, id: &str, target: &str) -> Result<bool
     Ok(true)
 }
 
+/// Re-parent a group and, when its project changes, re-home its whole subtree (nested groups and every
+/// session filed under them, archived ones included) to the target project.
+fn move_group_subtree(
+    conn: &Connection,
+    id: &str,
+    target_project_id: Option<&str>,
+    target_group_id: Option<&str>,
+    sort_order: i64,
+) -> Result<(), String> {
+    let source_project: Option<String> = conn
+        .query_row("SELECT project_id FROM groups WHERE id = ?1", params![id], |r| r.get(0))
+        .optional()
+        .map_err(|e| format!("Failed to read group: {e}"))?;
+    conn.execute(
+        "UPDATE groups SET project_id = ?1, parent_group_id = ?2, sort_order = ?3 WHERE id = ?4",
+        params![target_project_id, target_group_id, sort_order, id],
+    )
+    .map_err(|e| format!("Failed to move group: {e}"))?;
+    let Some(target) = target_project_id else { return Ok(()) };
+    if source_project.as_deref() == Some(target) {
+        return Ok(());
+    }
+    for gid in descendant_group_ids(conn, id)? {
+        conn.execute("UPDATE groups SET project_id = ?1 WHERE id = ?2", params![target, gid])
+            .map_err(|e| format!("Failed to move nested group: {e}"))?;
+        conn.execute("UPDATE sessions SET project_id = ?1 WHERE group_id = ?2", params![target, gid])
+            .map_err(|e| format!("Failed to move grouped sessions: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Move a node to a new parent and sort position; projects support reordering only.
 pub fn move_node(
     conn: &Connection,
@@ -2284,11 +2315,15 @@ pub fn move_node(
                     return Err("Cannot move a group into itself or its own subtree".into());
                 }
             }
-            conn.execute(
-                "UPDATE groups SET project_id = ?1, parent_group_id = ?2, sort_order = ?3 WHERE id = ?4",
-                params![target_project_id, target_group_id, sort_order, id],
-            )
-            .map_err(|e| format!("Failed to move group: {e}"))?;
+            // A session launches in its own project's root, so a cross-project move must carry every nested
+            // group and session along; otherwise they would sit under the new project but still start in the
+            // old one. A savepoint keeps this atomic even when the caller already holds a transaction.
+            conn.execute_batch("SAVEPOINT move_group")
+                .map_err(|e| format!("Failed to begin group move: {e}"))?;
+            let moved = move_group_subtree(conn, id, target_project_id, target_group_id, sort_order);
+            let end = if moved.is_ok() { "RELEASE move_group" } else { "ROLLBACK TO move_group; RELEASE move_group" };
+            conn.execute_batch(end).map_err(|e| format!("Failed to finish group move: {e}"))?;
+            moved?;
         }
         NodeKind::Session => {
             // Same cycle guard as groups: `move_node` is reachable over the WebSocket dispatch, where no
@@ -2984,6 +3019,45 @@ mod tests {
         assert!(move_node(&conn, NodeKind::Group, "g1", Some("p1"), Some("g2"), None, 0).is_err());
         assert!(move_node(&conn, NodeKind::Group, "g1", Some("p1"), Some("g1"), None, 0).is_err());
         assert!(move_node(&conn, NodeKind::Group, "g2", Some("p1"), None, None, 0).is_ok());
+    }
+
+    /// Sessions launch in their own project's root, so moving a group out of a collection into a project must
+    /// re-home every nested group and session; nodes outside the subtree stay put.
+    #[test]
+    fn move_node_carries_group_subtree_across_projects() {
+        let conn = mem_conn();
+        conn.execute_batch(
+            "INSERT INTO projects (id, name, root_path, sort_order, created_at) VALUES
+               ('c', 'collection', '', 0, 0), ('p', 'project', '/work/p', 0, 0);
+             INSERT INTO groups (id, project_id, name, sort_order, parent_group_id, created_at) VALUES
+               ('g1', 'c', 'g1', 0, NULL, 0), ('g2', 'c', 'g2', 0, 'g1', 0), ('other', 'c', 'other', 0, NULL, 0);
+             INSERT INTO sessions (id, project_id, group_id, name, kind, sort_order, parent_session_id, created_at) VALUES
+               ('s1', 'c', 'g1', 's1', 'terminal', 0, NULL, 0),
+               ('s1c', 'c', 'g1', 's1c', 'terminal', 0, 's1', 0),
+               ('s2', 'c', 'g2', 's2', 'terminal', 0, NULL, 0),
+               ('s3', 'c', 'other', 's3', 'terminal', 0, NULL, 0);",
+        )
+        .unwrap();
+
+        move_node(&conn, NodeKind::Group, "g1", Some("p"), None, None, 5).unwrap();
+
+        let project_of = |table: &str, id: &str| -> String {
+            conn.query_row(&format!("SELECT project_id FROM {table} WHERE id = ?1"), params![id], |r| r.get(0))
+                .unwrap()
+        };
+        for g in ["g1", "g2"] {
+            assert_eq!(project_of("groups", g), "p", "group {g}");
+        }
+        for s in ["s1", "s1c", "s2"] {
+            assert_eq!(project_of("sessions", s), "p", "session {s}");
+        }
+        assert_eq!(project_of("groups", "other"), "c");
+        assert_eq!(project_of("sessions", "s3"), "c");
+        // Nesting inside the moved subtree is preserved.
+        let parent: Option<String> = conn
+            .query_row("SELECT parent_group_id FROM groups WHERE id = 'g2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(parent.as_deref(), Some("g1"));
     }
 
     #[test]

@@ -1716,6 +1716,11 @@ impl SshTransport for OpensshTransport {
         // While SCP runs, poll remote temporary-file size and emit transfer percentage until exit.
         progress("transfer", Some(0));
         loop {
+            if let Err(e) = crate::connect_cancel::check() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e);
+            }
             match child.try_wait() {
                 Ok(Some(status)) => {
                     if !status.success() {
@@ -2115,6 +2120,10 @@ pub fn connect(
     progress("connect", None);
     // Authenticate and connect through the selected OpenSSH/russh backend.
     let transport = connect_transport(host, &session, auth, progress)?;
+    if let Err(e) = crate::connect_cancel::check() {
+        transport.close();
+        return Err(e);
+    }
 
     // Register successful transport to keep it alive; on failure stop forwarding and disconnect cleanly.
     match connect_inner(app_data_dir, transport.as_ref(), shared_db, mirror, progress) {
@@ -2143,6 +2152,7 @@ fn connect_inner(
     let session = t.session();
     progress("probe", None);
     let sys = probe_system(t)?;
+    crate::connect_cancel::check()?;
     // Linux, macOS, and Windows are supported; each shell's command differences are handled by the
     // builders above. Anything else (BSD, Solaris, …) has no published vela-server artifact.
     if sys.os != "linux" && sys.os != "macos" && sys.os != "windows" {
@@ -2203,6 +2213,7 @@ fn connect_inner(
         let _ = shell_exec(t, &sys, &kill_service_cmd(&sys));
     }
 
+    crate::connect_cancel::check()?;
     progress("supply", None);
     let platkey = crate::server_supply::platform_key(&sys.os, &sys.arch);
     // Use a verified local cache or download/verify from R2. VLX_DEV_SERVER_BIN bypasses publication for
@@ -2219,10 +2230,12 @@ fn connect_inner(
     };
 
     // Skip upload for an integrity-valid remote binary; otherwise verify and atomically install it.
+    crate::connect_cancel::check()?;
     if !remote_binary_ok(t, &sys, version, &supplied.sha256) {
         push_binary(t, &sys, version, &supplied, progress)?;
     }
     // Retry executable verification around transient ETXTBSY immediately after SCP.
+    crate::connect_cancel::check()?;
     progress("start", None);
     wait_remote_executable(t, &sys, version)?;
 

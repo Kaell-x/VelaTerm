@@ -16,6 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -25,6 +26,7 @@ use axum::response::IntoResponse;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use super::outbound;
 
 use super::dispatch::{dispatch, CallOrigin};
@@ -113,6 +115,14 @@ const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3
 /// Maximum inbound silence before declaring a connection dead. Healthy clients return a pong every 30 seconds;
 /// this 2.5-interval timeout reclaims half-open connections caused by NAT or sleep.
 const LIVENESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(75);
+
+/// Requests one connection may have outstanding. Further frames are not read until a reply is queued, so a
+/// client that floods requests is slowed by TCP backpressure instead of holding unbounded replies in memory.
+const MAX_PENDING_REPLIES: usize = 32;
+
+/// How long a reply may wait for earlier output to drain before the connection counts as stuck. It stays
+/// below the client's 30-second snapshot timeout so a stuck connection closes before the request gives up.
+const REPLY_PATIENCE: Duration = Duration::from_secs(20);
 
 async fn handle_socket(
     socket: WebSocket,
@@ -302,13 +312,16 @@ async fn handle_socket(
         event_ids.push(listen_forward(&ctx.app, name, out_tx.clone()));
     }
 
+    let pending_replies = Arc::new(Semaphore::new(MAX_PENDING_REPLIES));
     // Process the plaintext application frame retained during first-frame inspection.
     if let Some(first) = pending_first.take() {
+        let Ok(permit) = pending_replies.clone().acquire_owned().await else { return };
         handle_text(
             &ctx,
             &first,
             &conn_source,
             &out_tx,
+            permit,
             &mut pty_subs,
             &mut listened,
             &mut chat_listened,
@@ -341,11 +354,13 @@ async fn handle_socket(
                             },
                             None => text,
                         };
+                        let Ok(permit) = pending_replies.clone().acquire_owned().await else { break };
                         handle_text(
                             &ctx,
                             &plain,
                             &conn_source,
                             &out_tx,
+                            permit,
                             &mut pty_subs,
                             &mut listened,
                             &mut chat_listened,
@@ -504,6 +519,8 @@ fn handle_text(
     text: &str,
     conn_source: &str,
     out_tx: &outbound::Sender,
+    // Held until this frame's reply is queued; see MAX_PENDING_REPLIES.
+    permit: OwnedSemaphorePermit,
     pty_subs: &mut HashMap<String, u64>,
     listened: &mut HashSet<String>,
     // Sessions whose chat channel this connection forwards. Separate from `listened`: a session can have
@@ -580,7 +597,7 @@ fn handle_text(
                 let conn_source = conn_source.to_string();
                 let share = share.clone();
                 let queued = std::time::Instant::now();
-                tokio::task::spawn_blocking(move || {
+                let reply = tokio::task::spawn_blocking(move || {
                     let _context=crate::diagnostics::Context::enter(trace_request.as_deref());
                     let _operation=crate::diagnostics::Operation::enter(trace_operation.as_deref());
                     crate::diagnostics::record("DEBUG", "rpc_queue", serde_json::json!({"command":cmd,"requestId":trace_request,"queueMs":queued.elapsed().as_millis() as u64}));
@@ -599,8 +616,14 @@ fn handle_text(
                     // Original image reads have their existing explicit five-MiB limit. They use
                     // a single separately charged slot rather than consuming the control reserve.
                     let image=cmd=="chat_attachment" && args["purpose"]!="preview";
-                    let message=Message::Text(encoded);
-                    let _=if image {out_tx.attachment(message)} else {out_tx.send(message)};
+                    (Message::Text(encoded),image)
+                });
+                // Replies wait for room rather than failing: the client asked for them, and the burst a
+                // reconnect sends to resynchronize would otherwise close every new connection again.
+                tokio::spawn(async move {
+                    let Ok((message,image))=reply.await else {return};
+                    let _=if image {out_tx.attachment(message)} else {out_tx.reply(message,REPLY_PATIENCE).await};
+                    drop(permit);
                 });
             }
         }
@@ -895,6 +918,7 @@ mod tests {
             &frame,
             "ws-test",
             &out_tx,
+            Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap(),
             &mut pty_subs,
             &mut listened,
             &mut chat_listened,
@@ -943,7 +967,7 @@ mod tests {
             crate::db::repo::set_session_engine(&conn,&session.id,"chat").unwrap();session.id};
         for id in [1,2] {
             let frame=json!({"t":"invoke","id":id,"cmd":"translation_session","args":{"sessionId":sid}}).to_string();
-            handle_text(&ctx,&frame,"translation-test",&out_tx,&mut pty_subs,&mut listened,&mut chat_listened,&mut event_ids,None);
+            handle_text(&ctx,&frame,"translation-test",&out_tx,Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap(),&mut pty_subs,&mut listened,&mut chat_listened,&mut event_ids,None);
             let message=tokio::time::timeout(std::time::Duration::from_secs(5),out_rx.recv()).await.unwrap().unwrap().message;
             let Message::Text(text)=message else {panic!("expected snapshot reply")};
             let value:Value=serde_json::from_str(&text).unwrap();assert_eq!(value["ok"],true);

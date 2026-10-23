@@ -980,6 +980,7 @@ const zhCN: typeof en = {
   "connect.portPlaceholder": "端口",
   "connect.connecting": "连接中…",
   "connect.connect": "连接",
+  "connect.stop": "停止",
   "connect.stagePreparing": "准备服务端…",
   "connect.stageTransferring": "传输服务端…",
   "connect.stageStarting": "启动服务端…",
@@ -2376,7 +2377,7 @@ const zhCN: typeof en = {
   "chat.history.copyPart": "复制本部分",
 
   "chat.history.searchMore": "更多结果",
-  "chat.history.indexing": "历史记录仍在建立索引",
+  "chat.history.indexing": "正在加载会话记录…",
   "chat.history.newer": "加载较新的消息",
 
   "chat.history.copyComplete": "复制完整内容",
@@ -2389,7 +2390,7 @@ const zhCN: typeof en = {
   "export.preparing": "正在准备会话导出…",
   "chat.history.windowLimit": "这条消息超出了显示上限。请按需读取或下载完整内容。",
 
-  "chat.history.incomplete": "历史记录尚不完整，或仍在建立索引。来源可用后请重试。",
+  "chat.history.incomplete": "会话记录尚未加载完整，请稍后重试。",
   "chat.history.indexBusy": "历史索引正被另一个进程使用，请稍后重试。",
   "chat.history.unsupported": "部分历史记录的格式暂不支持，原始内容已保留。",
   "chat.history.canceled": "历史读取已取消。",

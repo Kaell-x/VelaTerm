@@ -644,6 +644,7 @@ fn dispatch_inner(app: &AppCtx, cmd: &str, args: &Value, source: &str, origin: C
 
         // ── Info panel, files, and Git ──
         "get_git_status" => to_value(git::status(&req_str(args, "path")?)),
+        "get_git_branch_info" => to_value(git::branch_info(&req_str(args, "path")?)),
         "git_changed_files" => to_value(git::changed_file_list(&req_str(args, "cwd")?)?),
         // Offered when the change list is cut off: one folder name derived from git status.
         "git_ignore_suggestion" => to_value(git::ignore_suggestion(&req_str(args, "cwd")?)?),
@@ -2669,6 +2670,7 @@ mod tests {
         "list_dir",        // metadata only (names, sizes, mtimes)
         "stat_file",       // metadata only
         "get_git_status",  // derived repo status, no file content
+        "get_git_branch_info", // branch/worktree metadata only, no file content
         "git_changed_files",
         "git_ignore_suggestion", // one folder name derived from git status, no file content
         "git_discover_repos", // directory names and paths only, no file content

@@ -1086,8 +1086,11 @@ export function useSessionMenu(opts?: { groupNavigation?: boolean }): SessionMen
     }
     items.push(sep, buildMoveTo(), sep);
     // Chat processes live outside the PTY manager. Closing their pane only releases them when idle,
-    // so explicitly stop the owning engine before closing the view.
-    if (useTermStore.getState().runtimes[node.id]?.status === "running") {
+    // so explicitly stop the owning engine before closing the view. The backend's `alive` decides when it has
+    // reported one: `status` only knows about processes this client started, and a chat process that exits
+    // on its own never clears it.
+    const rt = useTermStore.getState().runtimes[node.id];
+    if (rt?.alive ?? rt?.status === "running") {
       items.push({
         label: t("tree.killProcess"),
         onClick: () => {

@@ -995,6 +995,7 @@ const en = {
   "connect.portPlaceholder": "Port",
   "connect.connecting": "Connecting…",
   "connect.connect": "Connect",
+  "connect.stop": "Stop",
   "connect.stagePreparing": "Preparing server…",
   "connect.stageTransferring": "Transferring server…",
   "connect.stageStarting": "Starting server…",
@@ -2438,7 +2439,7 @@ const en = {
   "chat.history.copyPart": "Copy this part",
 
   "chat.history.searchMore": "More results",
-  "chat.history.indexing": "History is still being indexed",
+  "chat.history.indexing": "Loading conversation…",
   "chat.history.newer": "Load newer messages",
 
   "chat.history.copyComplete": "Copy complete content",
@@ -2451,7 +2452,7 @@ const en = {
   "export.preparing": "Preparing session export…",
   "chat.history.windowLimit": "This message exceeds the display limit. Read or download its complete content.",
 
-  "chat.history.incomplete": "History is incomplete or still being indexed. Retry once its sources are available.",
+  "chat.history.incomplete": "The conversation hasn’t finished loading. Try again shortly.",
   "chat.history.indexBusy": "The history index is in use by another process. Try again shortly.",
   "chat.history.unsupported": "Some history records are unsupported. Their original content has been retained.",
   "chat.history.canceled": "History reading was canceled.",

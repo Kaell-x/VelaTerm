@@ -1,3 +1,13 @@
+## v0.2.14 — 2026-10-23
+
+- 🔌 Les connexions distantes ne se coupent plus et ne se reconnectent plus chaque seconde lorsque plusieurs longues conversations sont ouvertes ; ces conversations s’ouvrent de nouveau normalement.
+- ⏹️ Les connexions SSH et WSL affichent un bouton « Arrêter » pendant la connexion, ce qui permet de l’interrompre à n’importe quelle étape, y compris pendant la préparation du serveur ; pendant une connexion, « Annuler » dans la boîte de dialogue du mot de passe l’interrompt également.
+- 🌿 L’arborescence des sessions et les libellés de branche n’accumulent plus de processus Git dans les grands dépôts, et les lectures Git en arrière-plan s’arrêtent au bout de 30 secondes au lieu de rester bloquées.
+- 🧩 Le panneau Git se met à jour beaucoup plus vite dans les dépôts comportant des sous-modules : des modifications à l’intérieur d’un sous-module ne le font plus apparaître dans le dépôt parent, mais un sous-module qui pointe vers un nouveau commit reste listé.
+- 📁 Les groupes peuvent être glissés vers d’autres projets avec leurs groupes imbriqués et leurs sessions, et ces sessions démarrent ensuite dans le dossier du nouveau projet.
+- ⏳ À l’ouverture d’une longue conversation, un petit indicateur « Chargement de la conversation… » remplace « L’indexation de l’historique est en cours ».
+- 🖱️ Le menu contextuel des sessions affiche « Tuer le processus » tant que le processus de la session est en cours d’exécution, y compris lorsqu’il a été lancé depuis un autre client, et le masque une fois le processus terminé.
+
 ## v0.2.13 — 2026-10-22
 
 - 📱 Sur téléphone, les agents exécutés dans la vue terminal s’ouvrent directement sur le terminal, avec une zone de saisie flottante pour rédiger ou dicter des messages entiers ; de petits boutons « Transcription » et « Terminal » dans l’en-tête permettent de passer de l’un à l’autre, et la transcription ne propose plus de passer à la vue conversation.

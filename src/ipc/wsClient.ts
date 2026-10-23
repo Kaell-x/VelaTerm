@@ -55,6 +55,12 @@ const TOKEN_STORAGE_KEY = "vlx-token";
 /** Reconnect backoff starts at 1s, doubles each time, and is capped at 30s. */
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
+/**
+ * A connection must stay up this long before the backoff resets. A server that accepts and then closes
+ * every connection, for example when it cannot deliver the resynchronization burst, would otherwise be
+ * retried every second indefinitely.
+ */
+const RECONNECT_STABLE_MS = 10_000;
 
 /**
  * The server sends an application-level `{"t":"ping"}` text-frame heartbeat every 30s because
@@ -228,6 +234,8 @@ class WsClient {
   private reconnectAttempts = 0;
   /** Pending reconnect timer; ensures that only one retry is scheduled at a time. */
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Resets the backoff once the live connection has lasted RECONNECT_STABLE_MS. */
+  private stableTimer: ReturnType<typeof setTimeout> | undefined;
   /** Credential-expiry callbacks; LoginGate returns to login after an /api/me 401. The optional
    *  reason distinguishes a server-side login rate limit from failed credentials on the E2EE path. */
   private readonly authLostCbs = new Set<(reason?: HandshakeFailure) => void>();
@@ -507,7 +515,10 @@ class WsClient {
    */
   private goOnline(ws: WebSocket) {
     this.connectPromise = null;
-    this.reconnectAttempts = 0;
+    clearTimeout(this.stableTimer);
+    this.stableTimer = setTimeout(() => {
+      if (this.ws === ws) this.reconnectAttempts = 0;
+    }, RECONNECT_STABLE_MS);
     this.everConnected = true;
     this.emitConnState("online");
     // If no traffic arrives within IDLE_TIMEOUT_MS despite the server's 30s heartbeat, treat the

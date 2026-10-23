@@ -981,6 +981,7 @@ const zhTW: typeof en = {
   "connect.portPlaceholder": "連接埠", // Port
   "connect.connecting": "連線中…", // Connecting…
   "connect.connect": "連線", // Connect
+  "connect.stop": "停止",
   "connect.stagePreparing": "準備伺服器…",
   "connect.stageTransferring": "傳輸伺服器…",
   "connect.stageStarting": "啟動伺服器…",
@@ -2377,7 +2378,7 @@ const zhTW: typeof en = {
   "chat.history.copyPart": "複製本部分",
 
   "chat.history.searchMore": "更多結果",
-  "chat.history.indexing": "歷史記錄仍在建立索引",
+  "chat.history.indexing": "正在載入會話記錄…",
   "chat.history.newer": "載入較新的訊息",
 
   "chat.history.copyComplete": "複製完整內容",
@@ -2390,7 +2391,7 @@ const zhTW: typeof en = {
   "export.preparing": "正在準備匯出會話…",
   "chat.history.windowLimit": "這則訊息超出顯示上限。請按需讀取或下載完整內容。",
 
-  "chat.history.incomplete": "歷史記錄尚不完整，或仍在建立索引。來源可用後請重試。",
+  "chat.history.incomplete": "會話記錄尚未完整載入，請稍後重試。",
   "chat.history.indexBusy": "歷史索引正由另一個程序使用，請稍後重試。",
   "chat.history.unsupported": "部分歷史記錄的格式尚未支援，原始內容已保留。",
   "chat.history.canceled": "歷史讀取已取消。",

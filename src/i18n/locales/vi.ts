@@ -985,6 +985,7 @@ const vi: typeof en = {
   "connect.portPlaceholder": "Cổng",
   "connect.connecting": "Đang kết nối…",
   "connect.connect": "Kết nối",
+  "connect.stop": "Dừng",
   "connect.stagePreparing": "Đang chuẩn bị máy chủ…",
   "connect.stageTransferring": "Đang truyền máy chủ…",
   "connect.stageStarting": "Đang khởi động máy chủ…",
@@ -2387,7 +2388,7 @@ const vi: typeof en = {
   "chat.history.copyPart": "Sao chép phần này",
 
   "chat.history.searchMore": "Thêm kết quả",
-  "chat.history.indexing": "Lịch sử vẫn đang được lập chỉ mục",
+  "chat.history.indexing": "Đang tải cuộc trò chuyện…",
   "chat.history.newer": "Tải các tin nhắn mới hơn",
 
   "chat.history.copyComplete": "Sao chép toàn bộ nội dung",
@@ -2400,7 +2401,7 @@ const vi: typeof en = {
   "export.preparing": "Đang chuẩn bị xuất phiên…",
   "chat.history.windowLimit": "Tin nhắn này vượt quá giới hạn hiển thị. Hãy tải toàn bộ nội dung để đọc hoặc tải xuống thành tệp.",
 
-  "chat.history.incomplete": "Lịch sử chưa đầy đủ hoặc vẫn đang được lập chỉ mục. Hãy thử lại khi có thể truy cập các nguồn dữ liệu.",
+  "chat.history.incomplete": "Cuộc trò chuyện chưa tải xong. Hãy thử lại sau giây lát.",
   "chat.history.indexBusy": "Một tiến trình khác đang sử dụng chỉ mục lịch sử. Hãy thử lại sau ít phút.",
   "chat.history.unsupported": "Một số định dạng bản ghi lịch sử chưa được hỗ trợ. Nội dung gốc đã được giữ lại.",
   "chat.history.canceled": "Đã hủy việc đọc lịch sử.",

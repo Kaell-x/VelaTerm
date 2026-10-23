@@ -992,6 +992,7 @@ const ko: typeof en = {
   "connect.portPlaceholder": "포트", // Port
   "connect.connecting": "연결 중…", // Connecting…
   "connect.connect": "연결", // Connect
+  "connect.stop": "중지",
   "connect.stagePreparing": "서버 준비 중…",
   "connect.stageTransferring": "서버 전송 중…",
   "connect.stageStarting": "서버 시작 중…",
@@ -2409,7 +2410,7 @@ const ko: typeof en = {
   "chat.history.copyPart": "이 부분 복사",
 
   "chat.history.searchMore": "결과 더 보기",
-  "chat.history.indexing": "기록을 인덱싱하는 중입니다",
+  "chat.history.indexing": "대화를 불러오는 중…",
   "chat.history.newer": "이후 메시지 불러오기",
 
   "chat.history.copyComplete": "전체 내용 복사",
@@ -2422,7 +2423,7 @@ const ko: typeof en = {
   "export.preparing": "세션 내보내기를 준비하고 있습니다…",
   "chat.history.windowLimit": "이 메시지는 표시 한도를 초과합니다. 전체 내용을 읽거나 다운로드하세요.",
 
-  "chat.history.incomplete": "기록이 불완전하거나 아직 색인을 만드는 중입니다. 원본에 접근할 수 있게 되면 다시 시도하세요.",
+  "chat.history.incomplete": "대화를 아직 다 불러오지 못했습니다. 잠시 후 다시 시도하세요.",
   "chat.history.indexBusy": "다른 프로세스에서 기록 색인을 사용하고 있습니다. 잠시 후 다시 시도하세요.",
   "chat.history.unsupported": "일부 기록 형식은 지원되지 않습니다. 원본 내용은 보존되어 있습니다.",
   "chat.history.canceled": "기록 읽기가 취소되었습니다.",

@@ -443,7 +443,7 @@ function SubagentConversation({ sessionId, taskId, live, hidden }: { sessionId: 
     <section className="sv-task-section sv-task-conversation" ref={sectionRef}>
       <h3>{t("chat.tasks.conversation")}</h3>
       {page?.hasMore && <button className="vlx-btn" disabled={pageBusy} onClick={()=>void loadPage.current("before")}>{t("chat.sync.history")}</button>}
-      {page?.indexing && <div role="status">{t("chat.history.indexing")}</div>}
+      {page?.indexing && <div className="sv-sync-state sv-loading-hint" role="status">{t("chat.history.indexing")}</div>}
       {!rows ? (
         <div className="sv-task-empty">{t("chat.tasks.conversationUnavailable")}</div>
       ) : entries.length === 0 ? (

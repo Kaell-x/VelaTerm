@@ -2573,7 +2573,7 @@ export function ChatPane({
                 </button>}
                 {historyError && <div className="sv-history-error" role="alert">{historyError}</div>}
               </div>}
-              {historyCoverage === "partial" && <div className="sv-sync-state" role="status">{t("chat.history.indexing")}</div>}
+              {historyCoverage === "partial" && <div className="sv-sync-state sv-loading-hint" role="status">{t("chat.history.indexing")}</div>}
               {historyError && !hasMore && <div className="sv-sync-state" role="alert">{historyError}</div>}
               {/* An empty conversation is what a new session opens on, so it gets the middle of the view:
                   the agent's own mark, drawn large enough to say which agent this is, and one line. */}

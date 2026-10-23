@@ -136,6 +136,7 @@ const DIRECT_DESKTOP_CMDS = new Set([
   "ssh_trust_host",
   "ssh_connect",
   "wsl_connect",
+  "connect_cancel",
   "ssh_disconnect",
   "browser_open",
   "browser_navigate",

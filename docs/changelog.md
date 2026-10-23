@@ -1,11 +1,21 @@
 # Changelog
 
-> Created: 2026-07-09 16:10 · Updated: 2026-10-22
+> Created: 2026-07-09 16:10 · Updated: 2026-10-23
 
 All notable changes to VelaTerm are documented here, newest first.
 v0.1.91 is the first public release; earlier version numbers were internal iterations and are not covered.
 
 ---
+
+## v0.2.14 — 2026-10-23
+
+- 🔌 Remote connections no longer drop and reconnect every second while several long conversations are open, so those conversations open normally again.
+- ⏹️ SSH and WSL connections show a Stop button while connecting, so you can stop at any stage, including while the server is being prepared; Cancel in the password dialog also stops a connection in progress.
+- 🌿 The session tree and branch labels no longer pile up Git processes in large repositories, and background Git reads stop after 30 seconds instead of hanging.
+- 🧩 The Git panel refreshes much faster in repositories with submodules: edits inside a submodule no longer list it in the parent repository, while a submodule that points to a new commit is still listed.
+- 📁 Groups can be dragged into other projects, taking their nested groups and sessions along, and those sessions then start in the new project's folder.
+- ⏳ Opening a long conversation shows a small Loading conversation… indicator instead of History is still being indexed.
+- 🖱️ The session context menu shows Kill Process whenever the session's process is running, including processes started from another client, and hides it once the process has exited.
 
 ## v0.2.13 — 2026-10-22
 

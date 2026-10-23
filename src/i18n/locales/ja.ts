@@ -995,6 +995,7 @@ const ja: typeof en = {
   "connect.portPlaceholder": "ポート", // Port
   "connect.connecting": "接続中…", // Connecting…
   "connect.connect": "接続", // Connect
+  "connect.stop": "中止",
   "connect.stagePreparing": "サーバーを準備中…",
   "connect.stageTransferring": "サーバーを転送中…",
   "connect.stageStarting": "サーバーを起動中…",
@@ -2426,7 +2427,7 @@ const ja: typeof en = {
   "chat.history.copyPart": "このパートをコピー",
 
   "chat.history.searchMore": "他の検索結果",
-  "chat.history.indexing": "履歴のインデックスを作成中です",
+  "chat.history.indexing": "会話を読み込んでいます…",
   "chat.history.newer": "新しいメッセージを読み込む",
 
   "chat.history.copyComplete": "内容をすべてコピー",
@@ -2439,7 +2440,7 @@ const ja: typeof en = {
   "export.preparing": "セッションのエクスポートを準備しています…",
   "chat.history.windowLimit": "このメッセージは表示上限を超えています。全文を読み込むか、ダウンロードしてください。",
 
-  "chat.history.incomplete": "履歴が不完全か、まだ索引を作成しています。参照元が利用可能になったら再試行してください。",
+  "chat.history.incomplete": "会話の読み込みが完了していません。しばらくしてから再試行してください。",
   "chat.history.indexBusy": "別のプロセスが履歴の索引を使用しています。しばらくしてから再試行してください。",
   "chat.history.unsupported": "一部の履歴の形式には対応していません。元の内容は保存されています。",
   "chat.history.canceled": "履歴の読み込みをキャンセルしました。",

@@ -176,7 +176,7 @@ pub fn dispatch_shared(
         "session_states" => return filtered_session_states(app, scope),
         // Locations and host-side UI writes do not belong to a visitor. Neutral values keep the shared shell
         // rendering instead of surfacing errors for data it does not need.
-        "get_git_status" | "get_session_cwd" => return Ok(Value::Null),
+        "get_git_status" | "get_git_branch_info" | "get_session_cwd" => return Ok(Value::Null),
         "set_app_settings" => return Ok(Value::Null),
         "mirror_get" => {
             return Ok(json!({"enabled":false,"rev":0,"source":Value::Null,"state":Value::Null}))
