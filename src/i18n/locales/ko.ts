@@ -1978,7 +1978,7 @@ const ko: typeof en = {
   "session.toolNoDetail": "더 기록된 내용이 없습니다",
   "session.showMore": (n: number) => `${n}자 더 보기`,
   "session.showLess": "접기",
-  "session.composerHint": "에이전트에게 메시지 · Enter로 전송, Shift+Enter로 줄바꿈",
+  "session.composerHint": "에이전트에게 메시지 · Shift+Enter로 전송, Enter로 줄바꿈",
   "session.send": "보내기",
 
   // ── 대화 엔진(프로토콜로 구동되는 세션) ──

@@ -2000,7 +2000,7 @@ const en = {
   "session.toolNoDetail": "Nothing else was recorded",
   "session.showMore": (n: number) => `Show ${n} more characters`,
   "session.showLess": "Show less",
-  "session.composerHint": "Message the agent · Enter sends, Shift+Enter adds a line",
+  "session.composerHint": "Message the agent · Shift+Enter sends, Enter adds a line",
   "session.send": "Send",
 
   // ── Chat engine (a session driven as a protocol peer) ──

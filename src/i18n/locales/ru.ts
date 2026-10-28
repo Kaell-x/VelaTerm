@@ -2011,7 +2011,7 @@ const ru: typeof en = {
   "session.toolNoDetail": "Больше ничего не записано",
   "session.showMore": (n: number) => `Показать ещё ${n} символов`,
   "session.showLess": "Свернуть",
-  "session.composerHint": "Сообщение агенту · Enter отправляет, Shift+Enter переносит строку",
+  "session.composerHint": "Сообщение агенту · Shift+Enter отправляет, Enter переносит строку",
   "session.send": "Отправить",
 
   // ── Движок беседы (сессия, управляемая по протоколу) ──

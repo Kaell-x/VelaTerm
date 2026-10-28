@@ -1995,7 +1995,7 @@ const ja: typeof en = {
   "session.toolNoDetail": "これ以上の記録はありません",
   "session.showMore": (n: number) => `残り ${n} 文字を表示`,
   "session.showLess": "折りたたむ",
-  "session.composerHint": "エージェントに送信 · Enter で送信、Shift+Enter で改行",
+  "session.composerHint": "エージェントに送信 · Shift+Enter で送信、Enter で改行",
   "session.send": "送信",
 
   // ── チャットエンジン（プロトコルで駆動するセッション） ──

@@ -2003,7 +2003,7 @@ const ptBR: typeof en = {
   "session.toolNoDetail": "Nada mais foi registrado",
   "session.showMore": (n: number) => `Mostrar mais ${n} caracteres`,
   "session.showLess": "Mostrar menos",
-  "session.composerHint": "Escreva para o agente · Enter envia, Shift+Enter quebra a linha",
+  "session.composerHint": "Escreva para o agente · Shift+Enter envia, Enter quebra a linha",
   "session.send": "Enviar",
 
   // ── Motor de conversa (uma sessão conduzida por protocolo) ──

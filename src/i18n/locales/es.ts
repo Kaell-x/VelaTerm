@@ -2006,7 +2006,7 @@ const es: typeof en = {
   "session.toolNoDetail": "No se registró nada más",
   "session.showMore": (n: number) => `Mostrar ${n} caracteres más`,
   "session.showLess": "Mostrar menos",
-  "session.composerHint": "Escribe al agente · Intro envía, Mayús+Intro salta de línea",
+  "session.composerHint": "Escribe al agente · Mayús+Intro envía, Intro salta de línea",
   "session.send": "Enviar",
 
   // ── Motor de conversación (una sesión gobernada por protocolo) ──

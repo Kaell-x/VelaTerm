@@ -306,7 +306,7 @@ it("sends the first translated Claude message without waiting for its native ses
   await screen.findByRole("switch", { name: "Translation" });
   const input = container.querySelector<HTMLTextAreaElement>(".sv-box textarea")!;
   fireEvent.change(input, { target: { value: "Hello" } });
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   await waitFor(() => expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "translation_send")).toBe(true));
   const calls = vi.mocked(invoke).mock.calls.map(([command]) => command);
   expect(calls.indexOf("translation_prepare")).toBeLessThan(calls.indexOf("chat_start"));
@@ -330,7 +330,7 @@ it("still waits for the native Codex session before sending a translated message
   await screen.findByRole("switch", { name: "Translation" });
   const input = container.querySelector<HTMLTextAreaElement>(".sv-box textarea")!;
   fireEvent.change(input, { target: { value: "Hello" } });
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   await waitFor(() => expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "chat_start")).toBe(true));
   expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "translation_send")).toBe(false);
   act(() => eventCallback({ type: "session", agentSessionId: "thread-1", model: "old-model" }));
@@ -353,7 +353,7 @@ it("resynchronizes on reconnection and reuses the uncertain submission identifie
   vi.mocked(invoke).mockImplementation((command, args) => command === "chat_send"
     ? Promise.reject(disconnected) : previous(command, args));
   fireEvent.change(input, { target: { value: "Keep this message" } });
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   await screen.findByText("Delivery unconfirmed");
   const original = vi.mocked(invoke).mock.calls.find(([command]) => command === "chat_send")![1]!;
   vi.mocked(invoke).mockImplementation(previous);
@@ -371,7 +371,7 @@ it("preserves input when an older server cannot deduplicate submissions", async 
   await act(async () => {});
   const input = container.querySelector<HTMLTextAreaElement>(".sv-box textarea")!;
   fireEvent.change(input, { target: { value: "Do not lose this" } });
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   expect(input.value).toBe("Do not lose this");
   expect(screen.getByText("Update the server before sending messages from this client.")).toBeTruthy();
   expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "chat_send")).toBe(false);
@@ -518,7 +518,7 @@ it("recalls a submitted edit as the latest input and starts a fresh draft after 
   input.setSelectionRange(0, 0);
   fireEvent.keyDown(input, { key: "ArrowUp" });
   fireEvent.change(input, { target: { value: "Edited history" } });
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   await waitFor(() => expect(useOutbox.getState().sessions.s?.[0].status).toBe("sent"));
   fireEvent.keyDown(input, { key: "ArrowUp" });
   expect(input.value).toBe("Edited history");
@@ -893,11 +893,30 @@ it("keeps the composer idle while a background task holds the session on working
   expect(screen.getByText(/Stop · Esc/)).toBeTruthy();
 });
 
-it("sends normally when Alt+Enter arrives with no running turn", async () => {
+it("submits with Shift+Enter and leaves Enter to insert a newline", async () => {
+  const { container } = await mountPane();
+  const input = container.querySelector<HTMLTextAreaElement>(".sv-composer textarea")!;
+  fireEvent.change(input, { target: { value: "Hello" } });
+  expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(true);
+  expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "chat_send")).toBe(false);
+  expect(fireEvent.keyDown(input, { key: "Enter", shiftKey: true })).toBe(false);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("chat_send", expect.objectContaining({ text: "Hello" })));
+});
+
+it.each([{ isComposing: true }, { keyCode: 229 }])("does not submit from an IME confirmation: %o", async (extra) => {
+  const { container } = await mountPane();
+  const input = container.querySelector<HTMLTextAreaElement>(".sv-composer textarea")!;
+  fireEvent.change(input, { target: { value: "中文" } });
+  expect(fireEvent.keyDown(input, { key: "Enter", shiftKey: true, ...extra })).toBe(true);
+  expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "chat_send")).toBe(false);
+  expect(input.value).toBe("中文");
+});
+
+it("sends normally when Alt+Shift+Enter arrives with no running turn", async () => {
   const { container } = await mountPane();
   const input = container.querySelector(".sv-composer textarea") ?? screen.getByRole("textbox");
   fireEvent.change(input, { target: { value: "Hello" } });
-  fireEvent.keyDown(input, { key: "Enter", altKey: true });
+  fireEvent.keyDown(input, { key: "Enter", altKey: true, shiftKey: true });
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("chat_send", expect.objectContaining({ behavior: "queue", text: "Hello" })));
 });
 
@@ -948,7 +967,7 @@ it.each(["claude", "codex", "opencode"] as const)("%s: clears submitted text bef
   vi.mocked(invoke).mockImplementation((command, args) => command === "chat_send"
     ? new Promise<string>((resolve) => { accept = () => resolve("queued"); }) as Promise<never> : previous(command, args));
   fireEvent.change(input, { target: { value: "Submitted message" } });
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   expect(input.value).toBe("");
   expect(input.readOnly).toBe(false);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("chat_send", expect.anything()));
@@ -956,7 +975,7 @@ it.each(["claude", "codex", "opencode"] as const)("%s: clears submitted text bef
   act(() => eventCallback({ type: "queued", items: [{ id: messageId, text: "Submitted message" }] }));
   expect(screen.getByText("Submitted message")).toBeTruthy();
   expect(input.value).toBe("");
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "chat_send")).toHaveLength(1);
   fireEvent.change(input, { target: { value: "Next draft" } });
   await act(async () => accept());
@@ -974,7 +993,7 @@ it.each(["chat_start", "chat_send"])("keeps the failed message without overwriti
     ? new Promise<void>((_, reject) => { refuse = reject; }) as Promise<never> : previous(command, args));
   fireEvent.change(input, { target: { value: "  Original draft\n" } });
   input.setSelectionRange(5, 5);
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   expect(input.value).toBe("");
   fireEvent.change(input, { target: { value: "Next draft" } });
   await waitFor(() => expect(refuse).toBeTypeOf("function"));
@@ -1092,7 +1111,7 @@ it.each([
   fireEvent.keyDown(input, { key: "Tab" });
   expect(input.value).toBe(native);
   fireEvent.change(input, { target: { value: native + "inspect the project" } });
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("chat_send", expect.objectContaining({ text: native + "inspect the project" })));
 });
 
@@ -1123,7 +1142,7 @@ it("moves through the skill list with the arrow keys and takes the highlighted o
   await screen.findByRole("option", { name: /vstat/ });
   expect(selected()).toBe("$vspawn");
   fireEvent.keyDown(input, { key: "ArrowUp" });
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   expect(input.value).toBe("$vstat ");
   expect(vi.mocked(invoke).mock.calls.some(([name]) => name === "chat_send")).toBe(false);
 });
@@ -1143,7 +1162,7 @@ it("waits for the skill catalogue and retries a failed lookup without sending th
   const input = container.querySelector<HTMLTextAreaElement>(".sv-box textarea")!;
   fireEvent.change(input, { target: { value: "$vsp", selectionStart: 4 } });
   await screen.findByRole("status", { name: "" });
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   expect(vi.mocked(invoke).mock.calls.some(([name]) => name === "chat_send")).toBe(false);
   await act(async () => failLookup(new Error("Skill lookup failed")));
   await screen.findByText(/Skill lookup failed/);
@@ -1203,7 +1222,7 @@ it("keeps following layout growth and viewport changes, but preserves manual his
     expect(top).toBe(900);
     const input = container.querySelector<HTMLTextAreaElement>(".sv-box textarea")!;
     fireEvent.change(input, { target: { value: "Continue" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     await waitFor(() => expect(input.value).toBe(""));
     expect(top).toBe(2250);
     height = 2800;
@@ -1262,7 +1281,7 @@ it("opens Codex rewind on the first Enter and can reopen it before confirming", 
   message.scrollIntoView = vi.fn(() => { scroll.scrollTop = 25; });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     fireEvent.change(input, { target: { value: "/rewind" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     await screen.findByRole("button", { name: "Rewind conversation" });
     await waitFor(() => expect(message.scrollIntoView).toHaveBeenCalledTimes(attempt + 1));
     fireEvent.click(screen.getByRole("button", { name: "Rewind conversation" }));
@@ -1322,7 +1341,7 @@ it.each([
   expect(screen.getByText("Keep this earlier message")).toBeTruthy();
   expect(screen.queryByText("Obsolete answer")).toBeNull();
   expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "chat_send")).toBe(false);
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   await waitFor(() => expect(vi.mocked(invoke).mock.calls.find(([command]) => command === "chat_send")?.[1]).toMatchObject({ text, images: [image] }));
   expect(container.querySelector(".sv-attach-thumb")).toBeNull();
 });
@@ -1346,7 +1365,7 @@ it("keeps unsent text and images when restoring an earlier image, and allows rem
   fireEvent.click(container.querySelector<HTMLButtonElement>(".sv-attach-drop")!);
   expect(container.querySelectorAll(".sv-attach-thumb")).toHaveLength(1);
   expect(container.querySelector<HTMLImageElement>(".sv-attach-thumb")?.alt).toBe("draft.png");
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   await waitFor(() => expect(vi.mocked(invoke).mock.calls.find(([command]) => command === "chat_send")?.[1]).toMatchObject({
     text: "Unsent draft", images: [{ mimeType: "image/png", data: "ZHJhZnQ=" }],
   }));
@@ -1388,14 +1407,14 @@ it("preserves all images when rewind exceeds the attachment limit and waits for 
   fireEvent.click(screen.getByRole("button", { name: "Rewind conversation" }));
   fireEvent.click(screen.getByRole("button", { name: "Rewind" }));
   await waitFor(() => expect(container.querySelectorAll(".sv-attach-thumb")).toHaveLength(MAX_IMAGES + 1));
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   expect(screen.getByText(`A message can include up to ${MAX_IMAGES} images`)).toBeTruthy();
   expect(input.value).toBe("Original");
   expect(container.querySelectorAll(".sv-attach-thumb")).toHaveLength(MAX_IMAGES + 1);
   expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "chat_send")).toBe(false);
   fireEvent.click([...container.querySelectorAll<HTMLButtonElement>(".sv-attach-drop")].at(-1)!);
   expect(container.querySelector(".sv-attach-note")).toBeNull();
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   await waitFor(() => expect(vi.mocked(invoke).mock.calls.find(([command]) => command === "chat_send")?.[1]).toMatchObject({ text: "Original", images }));
 });
 
@@ -1468,7 +1487,7 @@ it("keeps restored Codex history visible when a new process resets the timeline"
   const { container } = await mountPane("codex");
   const input = container.querySelector<HTMLTextAreaElement>(".sv-box textarea")!;
   fireEvent.change(input, { target: { value: "Continue here" } });
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
   act(() => eventCallback({ type: "reset", epoch: 200, revision: 1, hasMore: true,
     rows: [{ kind: "user", id: "replayed-id", text: "Earlier question" }] }));
   expect(screen.getByText("Earlier question")).toBeTruthy();
@@ -2010,7 +2029,7 @@ it("switches Claude in Chrome for the conversation, remembers the default, and f
 });
 
 
-it("Antigravity disables launch settings while working and queues Alt+Enter without steering", async () => {
+it("Antigravity disables launch settings while working and queues Alt+Shift+Enter without steering", async () => {
   const { container } = await mountPane("antigravity", null);
   await waitFor(() => expect(container.querySelector('[data-chip="model"] select')).toBeTruthy());
   act(() => useTermStore.setState({ runtimes: { s: { status: "running", agent: "antigravity", agentState: "working" } } }));
@@ -2021,7 +2040,7 @@ it("Antigravity disables launch settings while working and queues Alt+Enter with
   expect(screen.queryByRole("button", { name: "Steer" })).toBeNull();
   const input = container.querySelector<HTMLTextAreaElement>(".sv-composer textarea")!;
   fireEvent.change(input, { target: { value: "Next request" } });
-  fireEvent.keyDown(input, { key: "Enter", altKey: true });
+  fireEvent.keyDown(input, { key: "Enter", altKey: true, shiftKey: true });
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("chat_send", expect.objectContaining({ behavior: "queue", text: "Next request" })));
   act(() => useTermStore.setState({ runtimes: { s: { status: "running", agent: "antigravity", agentState: "waiting" } } }));
   act(() => eventCallback({ type: "turnCompleted" }));

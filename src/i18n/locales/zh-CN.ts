@@ -1945,7 +1945,7 @@ const zhCN: typeof en = {
   "session.toolNoDetail": "没有更多记录",
   "session.showMore": (n: number) => `显示其余 ${n} 个字符`,
   "session.showLess": "收起",
-  "session.composerHint": "给智能体发消息 · 回车发送，Shift+回车换行",
+  "session.composerHint": "给智能体发消息 · Shift+回车发送，回车换行",
   "session.send": "发送",
 
   // ── 对话引擎（以协议方式驱动的会话） ──

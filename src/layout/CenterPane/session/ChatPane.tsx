@@ -2125,8 +2125,8 @@ export function ChatPane({
 
   // Written out rather than taken from the shortcut registry: this combo belongs to the textarea, not to
   // a rebindable global action, so there is no binding to read.
-  const interruptCombo = IS_MAC && !IS_PLAIN_BROWSER ? "\u2318\u21A9" : "Ctrl+Enter";
-  const steerCombo = IS_MAC ? "\u2325\u21A9" : "Alt+Enter";
+  const interruptCombo = IS_MAC && !IS_PLAIN_BROWSER ? "\u2318\u21E7\u21A9" : "Ctrl+Shift+Enter";
+  const steerCombo = IS_MAC ? "\u2325\u21E7\u21A9" : "Alt+Shift+Enter";
   /** What a keypress in the composer asks for: interrupt with the primary modifier, steer with Alt.
    *  With no turn running there is nothing to steer or interrupt, so the modifiers fall back to a
    *  normal send instead of an error. */
@@ -2969,9 +2969,9 @@ export function ChatPane({
                     complete(chosenSuggestion);
                     return;
                   }
-                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  if (e.key === "Enter" && e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                     e.preventDefault();
-                    // Exact client commands execute on the first Enter. Otherwise completion would add
+                    // Exact client commands execute on the first Shift+Enter. Otherwise completion would add
                     // its cosmetic trailing space and make `/clear` or `/rewind` need two submissions.
                     if (attachments.length === 0 && /^\/(?:clear|new|rewind|compact|review|undo|redo|share|unshare)\s*$/.test(draft)) {
                       send(behaviorOf(e));
@@ -2980,7 +2980,7 @@ export function ChatPane({
                     } else if (chosenSuggestion) complete(chosenSuggestion);
                     // Holding the modifier says "not later, now": the running turn is stopped and this
                     // message goes first. Alt says "and also this": it joins the running turn. Plain
-                    // Enter queues, which is the safe default.
+                    // Shift+Enter queues, which is the safe default.
                     else send(behaviorOf(e));
                   }
                 }}

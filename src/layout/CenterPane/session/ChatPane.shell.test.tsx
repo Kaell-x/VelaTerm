@@ -57,7 +57,7 @@ async function mountPane() {
 
 function submit(input: HTMLTextAreaElement, text: string) {
   fireEvent.change(input, { target: { value: text } });
-  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 }
 
 const commands = () => vi.mocked(invoke).mock.calls.map(([command]) => command);
@@ -90,7 +90,7 @@ describe("shell mode in the composer", () => {
     runShell = () => new Promise((_, failure) => { reject = failure; });
     const input = await mountPane();
     submit(input, "!echo receipt-probe");
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     const calls = () => vi.mocked(invoke).mock.calls.filter(([command]) => command === "chat_run_shell");
     expect(calls()).toHaveLength(1);
     const first = calls()[0][1]?.messageId;

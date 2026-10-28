@@ -1998,7 +1998,7 @@ const de: typeof en = {
   "session.toolNoDetail": "Mehr wurde nicht aufgezeichnet",
   "session.showMore": (n: number) => `${n} weitere Zeichen anzeigen`,
   "session.showLess": "Weniger anzeigen",
-  "session.composerHint": "Nachricht an den Agenten · Enter sendet, Umschalt+Enter fügt eine Zeile ein",
+  "session.composerHint": "Nachricht an den Agenten · Umschalt+Enter sendet, Enter fügt eine Zeile ein",
   "session.send": "Senden",
 
   // ── Gesprächs-Engine (eine über Protokoll gesteuerte Sitzung) ──

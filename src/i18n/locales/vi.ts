@@ -1954,7 +1954,7 @@ const vi: typeof en = {
   "session.toolNoDetail": "Không còn nội dung nào được ghi lại",
   "session.showMore": (n: number) => `Hiển thị thêm ${n} ký tự`,
   "session.showLess": "Thu gọn",
-  "session.composerHint": "Nhắn cho tác nhân · Enter để gửi, Shift+Enter để xuống dòng",
+  "session.composerHint": "Nhắn cho tác nhân · Shift+Enter để gửi, Enter để xuống dòng",
   "session.send": "Gửi",
 
   // ── Bộ máy hội thoại (phiên được điều khiển bằng giao thức) ──

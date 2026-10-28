@@ -1946,7 +1946,7 @@ const zhTW: typeof en = {
   "session.toolNoDetail": "沒有更多記錄",
   "session.showMore": (n: number) => `顯示其餘 ${n} 個字元`,
   "session.showLess": "收合",
-  "session.composerHint": "傳訊息給智慧體 · Enter 送出，Shift+Enter 換行",
+  "session.composerHint": "傳訊息給智慧體 · Shift+Enter 送出，Enter 換行",
   "session.send": "送出",
 
   // ── 對話引擎（以協定方式驅動的會話） ──

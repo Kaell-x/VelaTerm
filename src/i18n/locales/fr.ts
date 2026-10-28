@@ -2009,7 +2009,7 @@ const fr: typeof en = {
   "session.toolNoDetail": "Rien d'autre n'a été enregistré",
   "session.showMore": (n: number) => `Afficher ${n} caractères de plus`,
   "session.showLess": "Réduire",
-  "session.composerHint": "Écrire à l'agent · Entrée pour envoyer, Maj+Entrée pour aller à la ligne",
+  "session.composerHint": "Écrire à l'agent · Maj+Entrée pour envoyer, Entrée pour aller à la ligne",
   "session.send": "Envoyer",
 
   // ── Moteur conversationnel (une session pilotée par protocole) ──
