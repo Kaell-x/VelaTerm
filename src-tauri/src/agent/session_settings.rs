@@ -191,8 +191,8 @@ pub fn native_state(session: &Session) -> Result<Value, String> {
     let Some(id) = session.agent_session_id.as_deref() else {
         return Ok(json!({}));
     };
-    if session.kind == SessionKind::Codex {
-        if let Some(state) = codex_thread_settings(id)? {
+    if session.kind.is_codex_family() {
+        if let Some(state) = codex_thread_settings(session.kind, id)? {
             return Ok(state);
         }
     }
@@ -218,8 +218,8 @@ pub fn native_state(session: &Session) -> Result<Value, String> {
 }
 
 /// Recent Codex releases also keep the thread's settings in their local state database.
-fn codex_thread_settings(id: &str) -> Result<Option<Value>, String> {
-    let Some(home) = super::resume::codex_home() else {
+fn codex_thread_settings(kind: SessionKind, id: &str) -> Result<Option<Value>, String> {
+    let Some(home) = super::resume::codex_home_for(kind) else {
         return Ok(None);
     };
     let Ok(entries) = std::fs::read_dir(home) else {
@@ -270,7 +270,7 @@ fn parse_recording_lines(
         {
             continue;
         }
-        if kind == SessionKind::Codex && row["type"] == "turn_context" {
+        if kind.is_codex_family() && row["type"] == "turn_context" {
             let p = &row["payload"];
             if p.get("model").is_some() {
                 state["model"] = p["model"].clone();
@@ -422,7 +422,7 @@ pub fn from_args(kind: SessionKind, text: Option<&str>) -> Selection {
                 state.effort = clean(value);
                 true
             }
-            "-c" | "--config" if kind == SessionKind::Codex => {
+            "-c" | "--config" if kind.is_codex_family() => {
                 if let Some((key, value)) = value.and_then(config_choice) {
                     let value = serde_json::from_str::<String>(value)
                         .unwrap_or_else(|_| value.trim_matches('\'').into());
@@ -459,7 +459,7 @@ pub fn without_selection_args(kind: SessionKind, text: Option<&str>) -> String {
             || (matches!(kind, SessionKind::Claude | SessionKind::Antigravity) && flag == "--effort")
             || (kind == SessionKind::Opencode && flag == "--variant")
             || (matches!(kind, SessionKind::Pi | SessionKind::Omp) && flag == "--thinking")
-            || (kind == SessionKind::Codex
+            || (kind.is_codex_family()
                 && matches!(flag, "-c" | "--config")
                 && value.and_then(config_choice).is_some());
         if remove {
@@ -495,7 +495,7 @@ pub fn terminal_args(
                 add("--effort", "VLX_SESSION_EFFORT", effort.clone());
             }
         }
-        SessionKind::Codex => {
+        SessionKind::Codex | SessionKind::Traex => {
             if let Some(effort) = &choice.effort {
                 add(
                     "-c",

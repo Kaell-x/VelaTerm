@@ -54,7 +54,8 @@ export function detectAgentScreen(
 ): ScreenDetection {
   switch (agent) {
     case "codex":
-      // Codex state is hook-only. usePtySession excludes it before reading xterm; keep this neutral branch as
+    case "traex":
+      // Codex-family state is hook-only. usePtySession excludes it before reading xterm; keep this neutral branch as
       // a defensive no-op for direct callers so terminal content can never become an activity signal.
       return { state: "working", visibleBlocker: false, visibleIdle: false, visibleWorking: false, skip: true };
     case "claude":

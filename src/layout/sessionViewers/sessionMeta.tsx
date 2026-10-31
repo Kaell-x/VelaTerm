@@ -14,6 +14,7 @@ import {
   openAiMarkEl,
   ompMarkEl,
   piMarkEl,
+  traexMarkEl,
   zooMarkEl,
 } from "../../components/brandIcons";
 import Icons from "../../components/Icons";
@@ -33,6 +34,7 @@ import { sessionIconEl } from "../agentPresetIcon";
 const KIND_COLOR: Partial<Record<SessionKind, string>> = {
   claude: "#D97757", // Orange (Anthropic's official color)
   codex: CODEX_BRAND_COLOR, // Theme-aware color shared with Usage (see brandIcons)
+  traex: "#14B8A6", // TRAE teal, distinct from Cursor's lighter cyan
   opencode: "#3B82F6", // Blue
   copilot: "#8957E5", // Purple
   cursor: "#18B5C9", // Cyan
@@ -55,6 +57,7 @@ const KIND_COLOR: Partial<Record<SessionKind, string>> = {
 export const AGENT_KIND_LABEL: Partial<Record<SessionKind, string>> = {
   claude: "Claude Code",
   codex: "Codex",
+  traex: "Traex",
   opencode: "OpenCode",
   copilot: "GitHub Copilot CLI",
   cursor: "Cursor CLI",
@@ -125,6 +128,8 @@ function rawKindIcon(kind: SessionKind, size: number) {
     // Codex uses the official OpenAI logo embedded in brandIcons, matching the Usage panel.
     case "codex":
       return openAiMarkEl(size);
+    case "traex":
+      return traexMarkEl(size);
     default:
       return <Icons.bot size={size} />;
   }

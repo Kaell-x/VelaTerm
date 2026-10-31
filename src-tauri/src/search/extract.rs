@@ -35,7 +35,7 @@ const HEAD_BYTES:u64=64*1024;
 const MAX_CHAIN:usize=100_000;
 
 pub(super) fn supported(kind:SessionKind) -> bool {
-    matches!(kind,SessionKind::Claude|SessionKind::Codex|SessionKind::Pi|SessionKind::Omp|SessionKind::Grok|SessionKind::Antigravity)
+    matches!(kind,SessionKind::Claude|SessionKind::Codex|SessionKind::Traex|SessionKind::Pi|SessionKind::Omp|SessionKind::Grok|SessionKind::Antigravity)
 }
 /// Grok drops messages left without text or tools after reading them all, which renumbers the ones
 /// after them, so its messages are always read from the first.
@@ -278,7 +278,7 @@ fn antigravity_request(content:&str) -> Option<&str> {
 fn pieces(kind:SessionKind,raw:&str) -> (Vec<transcript::Piece>,bool) {
     let pieces:Vec<transcript::Piece>=match kind {
         SessionKind::Claude=>transcript::parse_claude_line(raw).into_iter().collect(),
-        SessionKind::Codex=>transcript::parse_codex_line(raw).into_iter().collect(),
+        SessionKind::Codex|SessionKind::Traex=>transcript::parse_codex_line(raw).into_iter().collect(),
         SessionKind::Grok=>return (serde_json::from_str::<Value>(raw).map(|value|transcript::grok_pieces(&value)).unwrap_or_default(),true),
         SessionKind::Antigravity=> {
             let Ok(mut value)=serde_json::from_str::<Value>(raw) else {return (Vec::new(),true);};
@@ -294,7 +294,7 @@ fn pieces(kind:SessionKind,raw:&str) -> (Vec<transcript::Piece>,bool) {
     };
     let shown=!pieces.iter().any(|piece|!piece.text.is_empty()) || !match kind {
         SessionKind::Claude=>export::claude_events(raw).is_empty(),
-        SessionKind::Codex=>export::codex_events(raw).is_empty(),
+        SessionKind::Codex|SessionKind::Traex=>export::codex_events(raw).is_empty(),
         _=>export::pi_events(raw).is_empty(),
     };
     (pieces,shown)
@@ -335,13 +335,13 @@ pub(super) struct Transcript<'a> {kind:SessionKind,path:&'a Path,selection:Selec
 
 impl<'a> Transcript<'a> {
     pub(super) fn open(kind:SessionKind,path:&'a Path,cancel:&AtomicBool) -> Result<Self,String> {
-        Self::open_with(kind,path,&crate::agent::resume::find_codex_rollout,cancel)
+        Self::open_with(kind,path,&|id|crate::agent::resume::find_codex_rollout(kind,id),cancel)
     }
 
     fn open_with(kind:SessionKind,path:&'a Path,lookup:&impl Fn(&str)->Option<PathBuf>,cancel:&AtomicBool) -> Result<Self,String> {
         if !supported(kind) {return Err("unsupported_record: direct transcript reading is unavailable for this provider".into());}
         let selection=if tree(kind) {tree_selection(kind,path,cancel)?} else {Selection::All};
-        let ancestors=if kind==SessionKind::Codex {codex_ancestors(path,lookup)} else {Vec::new()};
+        let ancestors=if kind.is_codex_family() {codex_ancestors(path,lookup)} else {Vec::new()};
         Ok(Self {kind,path,selection,ancestors})
     }
 

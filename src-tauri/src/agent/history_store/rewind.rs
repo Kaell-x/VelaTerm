@@ -98,7 +98,7 @@ impl Selection {
 
 fn ready(branch:&Branch) -> Result<(),String> {
     if let Some(error)=&branch.error {return Err(error.clone());}
-    if !matches!(branch.kind,SessionKind::Claude|SessionKind::Codex|SessionKind::Opencode) {
+    if !matches!(branch.kind,SessionKind::Claude|SessionKind::Codex|SessionKind::Traex|SessionKind::Opencode) {
         return Err("detail_unavailable: this provider does not support conversation rewind".into());
     }
     for source in &branch.sources {
@@ -182,7 +182,7 @@ fn target(branch:&Branch,source:&RegisteredSource,start:u64,end:u64,validate:boo
     let value=super::store::reproject(source,start,&mut |_|Ok(()))?.value;
     let (message,turn)=match branch.kind {
         SessionKind::Opencode=>(identity(value.pointer(if value.pointer("/info/role").and_then(Value::as_str)==Some("assistant") {"/info/parentID"} else {"/info/id"}).and_then(Value::as_str))?,None),
-        SessionKind::Codex=>{
+        SessionKind::Codex|SessionKind::Traex=>{
             let turn={
                 let state=source.current()?;
                 state.records.range(..=start).rev().find(|(_,record)|record.event.as_deref()==Some("turn_context") && record.active && record.error.is_none())

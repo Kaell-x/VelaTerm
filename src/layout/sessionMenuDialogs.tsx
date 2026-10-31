@@ -1712,7 +1712,7 @@ export function NewAgentSession({
               cursor: permSupported ? "pointer" : "default",
             }}
           >
-            {["claude", "codex", "opencode"].includes(kind) ? (
+            {["claude", "codex", "traex", "opencode"].includes(kind) ? (
               <>
                 {t("info.permission")}
                 <AgentPermissionSelect key={kind} kind={kind} value={permissionMode} onChange={setPermissionMode} />
@@ -1738,7 +1738,7 @@ export function NewAgentSession({
               marginLeft: 24,
             }}
           >
-            {["claude", "codex", "opencode"].includes(kind) ? null : permSupported
+            {["claude", "codex", "traex", "opencode"].includes(kind) ? null : permSupported
               ? t("tree.permissionSkipHint")
               : kind === "pi"
                 ? t("tree.permissionUnsupportedPi")
@@ -1949,7 +1949,7 @@ export function ResumeSession({
               cursor: permSupported ? "pointer" : "default",
             }}
           >
-            {["claude", "codex", "opencode"].includes(kind) ? (
+            {["claude", "codex", "traex", "opencode"].includes(kind) ? (
               <>
                 {t("info.permission")}
                 <AgentPermissionSelect key={kind} kind={kind} value={permissionMode} onChange={setPermissionMode} />
@@ -1975,7 +1975,7 @@ export function ResumeSession({
               marginLeft: 24,
             }}
           >
-            {["claude", "codex", "opencode"].includes(kind) ? null : permSupported
+            {["claude", "codex", "traex", "opencode"].includes(kind) ? null : permSupported
               ? t("tree.permissionSkipHint")
               : kind === "pi"
                 ? t("tree.permissionUnsupportedPi")

@@ -38,6 +38,7 @@ function kindLabel(kind: SessionKind): string {
   if (kind === "terminal") return t("kind.terminal");
   if (kind === "claude") return "Claude";
   if (kind === "codex") return "Codex";
+  if (kind === "traex") return "Traex";
   if (kind === "opencode") return "OpenCode";
   if (kind === "copilot") return "Copilot";
   if (kind === "cursor") return "Cursor";

@@ -447,7 +447,7 @@ pub fn permission_flag(kind: SessionKind, mode: Option<&str>) -> Option<&'static
             _ => {}
         }
     }
-    if kind == SessionKind::Codex {
+    if kind.is_codex_family() {
         match mode.map(str::trim) {
             Some("read-only") => return Some("--sandbox read-only --ask-for-approval on-request"),
             Some("auto") => return Some("--sandbox workspace-write --ask-for-approval on-request"),
@@ -475,7 +475,7 @@ pub fn permission_flag(kind: SessionKind, mode: Option<&str>) -> Option<&'static
         // Other agents receive a flag only in skip mode and retain native incremental approval by default.
         _ if !skip => None,
         SessionKind::Claude => Some("--dangerously-skip-permissions"),
-        SessionKind::Codex => Some("--dangerously-bypass-approvals-and-sandbox"),
+        SessionKind::Codex | SessionKind::Traex => Some("--dangerously-bypass-approvals-and-sandbox"),
         SessionKind::Copilot => Some("--allow-all-tools"),
         SessionKind::Cursor => Some("--force"),
         // Antigravity (`agy`) uses Claude's flag in skip mode.
@@ -509,7 +509,7 @@ pub fn model_flag(kind: SessionKind, model: Option<&str>, effort: Option<&str>) 
     let model = model.map(str::trim).filter(|m| !m.is_empty())?;
     match kind {
         SessionKind::Claude | SessionKind::Copilot => Some(format!("--model {model}")),
-        SessionKind::Codex | SessionKind::Grok | SessionKind::Opencode => {
+        SessionKind::Codex | SessionKind::Traex | SessionKind::Grok | SessionKind::Opencode => {
             Some(format!("-m {model}"))
         }
         // Cursor has no effort flag at all. A "parameterized" model instead accepts bracketed overrides,
@@ -539,7 +539,7 @@ pub fn effort_flag(kind: SessionKind, effort: Option<&str>) -> Option<String> {
         SessionKind::Claude | SessionKind::Copilot => Some(format!("--effort {effort}")),
         SessionKind::Grok => Some(format!("--reasoning-effort {effort}")),
         // Codex has no dedicated flag; the generic config override sets the same setting.
-        SessionKind::Codex => Some(format!("-c model_reasoning_effort={effort}")),
+        SessionKind::Codex | SessionKind::Traex => Some(format!("-c model_reasoning_effort={effort}")),
         // OpenCode calls it a model variant, and documents the flag only on its `run` subcommand.
         SessionKind::Opencode => Some(format!("--variant {effort}")),
         // Cursor carries effort inside the model string; see `model_flag`.
@@ -882,7 +882,7 @@ fn launch(shell: ShellKind, bin: &str, bin_path: Option<&str>, args: &str) -> St
 ///
 /// `fork` marks the first launch of a forked conversation. With a valid `resume_id`, it forks instead of
 /// resuming in place: Claude uses `--resume <source-id> --fork-session`, while Codex uses `fork <source-id>`.
-/// The source remains unchanged. Without a resume ID it starts fresh. Only Claude and Codex support forks.
+/// The source remains unchanged. Without a resume ID it starts fresh. Claude and Codex-family agents support forks.
 ///
 /// `init_prompt` is the initial task for a spawned child session. On a new launch, it is injected through
 /// `INIT_PROMPT_ENV` as a positional prompt so the session starts with its task.
@@ -1025,9 +1025,9 @@ pub fn prepare_with_args_capabilities(
                 )),
             }
         }
-        SessionKind::Codex => {
-            // Codex command shape:
-            // `codex [resume <id>] -c notify=<value> -c hooks=<value>
+        SessionKind::Codex | SessionKind::Traex => {
+            // Codex-family command shape:
+            // `<agent> [resume <id>] -c notify=<value> -c hooks=<value>
             //        --dangerously-bypass-hook-trust --no-alt-screen ["$VLX_INIT_PROMPT"]`。
             // `--no-alt-screen` keeps Codex in normal inline terminal history so interrupting or backing
             // out with Esc does not make VelaTerm's xterm viewport jump to the top during an alternate-screen
@@ -1071,7 +1071,7 @@ pub fn prepare_with_args_capabilities(
                 env,
                 launch: Some(launch(
                     shell,
-                    "codex",
+                    crate::agent::executable::command_name(kind),
                     bin_path,
                     &format!("{base}{extra}{prompt}"),
                 )),
@@ -1431,6 +1431,7 @@ pub fn prepare_with_args_capabilities(
         kind,
         SessionKind::Claude
             | SessionKind::Codex
+            | SessionKind::Traex
             | SessionKind::Opencode
             | SessionKind::Copilot
             | SessionKind::Cursor
@@ -3048,6 +3049,26 @@ mod tests {
             &a.launch.unwrap(),
             "codex resume 019e8662-62f8-7a01-a144-e26a07a5e5bb -c notify=\"$VLX_CODEX_NOTIFY\" -c features.hooks=true -c hooks=\"$VLX_CODEX_HOOKS\" --dangerously-bypass-hook-trust --no-alt-screen",
         );
+    }
+
+    #[test]
+    fn prepare_traex_resume_and_fork_use_traex_binary() {
+        for (fork, subcommand) in [(false, "resume"), (true, "fork")] {
+            let a = prepare(
+                SessionKind::Traex,
+                "/bin/bash",
+                "/exe",
+                &ep(),
+                "s",
+                Some("019e8662-62f8-7a01-a144-e26a07a5e5bb"),
+                fork,
+                None,
+            );
+            assert_launch_inner(
+                &a.launch.unwrap(),
+                &format!("traex {subcommand} 019e8662-62f8-7a01-a144-e26a07a5e5bb -c notify=\"$VLX_CODEX_NOTIFY\" -c features.hooks=true -c hooks=\"$VLX_CODEX_HOOKS\" --dangerously-bypass-hook-trust --no-alt-screen"),
+            );
+        }
     }
 
     #[test]

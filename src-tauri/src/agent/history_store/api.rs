@@ -68,7 +68,7 @@ pub(crate) fn bind(store:Arc<Store>,sources:Vec<RegisteredSource>,kind:SessionKi
     }).collect::<Vec<_>>();
     let generation=digest(serde_json::to_string(&(signature,&error)).unwrap().as_bytes());
     for source in &sources {
-        if kind==SessionKind::Codex && source.indexed==0 && source.size>TAIL_BYTES && source.index.read().records.is_empty() {
+        if kind.is_codex_family() && source.indexed==0 && source.size>TAIL_BYTES && source.index.read().records.is_empty() {
             // The newest rows of a long rollout are shown before the whole file has been read.
             store.scan(kind,source,&std::sync::atomic::AtomicBool::new(false),true)?;
         }
@@ -104,7 +104,7 @@ impl Branch {
         let Some(record)=state.records.get(&row.record_start) else {return false;};
         if !record.active || state.superseded.contains_key(id) {return false;}
         // A Codex child thread presents only its completed items, not the context it inherited.
-        if self.kind==SessionKind::Codex && self.scope.starts_with("child:") && !matches!(record.subtype.as_deref(),Some("item_completed"|"itemCompleted")) {return false;}
+        if self.kind.is_codex_family() && self.scope.starts_with("child:") && !matches!(record.subtype.as_deref(),Some("item_completed"|"itemCompleted")) {return false;}
         true
     }
 

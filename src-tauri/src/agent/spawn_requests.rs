@@ -264,7 +264,7 @@ fn launch_defaults(app: &AppCtx, conn: &Connection, parent: Option<&Session>, ki
     let engine = if !kind.supports_chat() { "tui" }
         else if let Some(parent) = parent.filter(|p| p.kind.supports_chat()) { &parent.engine }
         else { prefs["agentDefaults"][kind.as_str()]["engine"].as_str()
-            .unwrap_or(if matches!(kind, SessionKind::Claude | SessionKind::Codex) { "chat" } else { "tui" }) };
+            .unwrap_or(if matches!(kind, SessionKind::Claude | SessionKind::Codex | SessionKind::Traex) { "chat" } else { "tui" }) };
     let _ = app;
     if !matches!(engine, "tui" | "chat") { return Err("Invalid default session engine".into()); }
     Ok((args, permission, engine.into()))
@@ -413,7 +413,7 @@ fn initial_prompt(app: &AppCtx, id: &str, request: &SpawnRequest, launch: &Launc
         let extension = match image.mime_type.as_str() { "image/jpeg" => "jpg", "image/png" => "png", "image/gif" => "gif", "image/webp" => "webp", _ => return Err("Unsupported image type".into()) };
         let path = dir.join(format!("{index}.{extension}"));
         std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-        prompt.push_str(&format!("\n{}{}", if launch.kind == SessionKind::Codex { "image_path: " } else { "" }, path.to_string_lossy()));
+        prompt.push_str(&format!("\n{}{}", if launch.kind.is_codex_family() { "image_path: " } else { "" }, path.to_string_lossy()));
     }
     Ok(prompt)
 }

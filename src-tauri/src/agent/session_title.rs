@@ -22,9 +22,14 @@ const MAX_CONTEXT_CHARS: usize = 350_000;
 const MAX_TITLE_CHARS: usize = 80;
 const TIMEOUT: Duration = Duration::from_secs(90);
 const AGENTS: &[SessionKind] = &[
-    SessionKind::Claude, SessionKind::Codex, SessionKind::Opencode,
-    SessionKind::Pi, SessionKind::Omp, SessionKind::Grok,
+    SessionKind::Claude, SessionKind::Codex, SessionKind::Traex, SessionKind::Opencode,
+    SessionKind::Pi, SessionKind::Omp, SessionKind::Grok, SessionKind::Kimi,
 ];
+
+/// One-shot title adapters that can receive a transcript through stdin instead of argv.
+fn accepts_long_prompt(kind: SessionKind) -> bool {
+    matches!(kind, SessionKind::Claude | SessionKind::Codex | SessionKind::Traex | SessionKind::Kimi)
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -220,7 +225,7 @@ fn generate_and_save(app: &AppCtx, id: &str, agent: Option<SessionKind>, model: 
     let flags = super::inject::split_extra_args(extra.as_deref());
     if stdin {
         command.args(&flags);
-        if kind == SessionKind::Codex { command.arg("-"); }
+        if kind.is_codex_family() { command.arg("-"); }
     } else {
         command.args(&flags);
         if kind == SessionKind::Grok { command.arg("-p"); }
@@ -310,7 +315,7 @@ pub(crate) fn available_binary(app: &AppCtx, kind: SessionKind, path: Option<&st
 fn pick_agent(app: &AppCtx, session: &Session, bytes: usize, chosen: Option<SessionKind>) -> Result<(SessionKind, String), String> {
     let kind = chosen.unwrap_or(session.kind);
     if !AGENTS.contains(&kind) { return Err("session_title:agent_unavailable".into()); }
-    if bytes > headless::ARG_PROMPT_LIMIT && !headless::spec(kind).unwrap().accepts_long_prompt() {
+    if bytes > headless::ARG_PROMPT_LIMIT && !accepts_long_prompt(kind) {
         return Err("session_title:agent_unavailable".into());
     }
     let path = if kind == session.kind { session.agent_path.as_deref() } else { None };
@@ -325,18 +330,26 @@ fn task_args(kind: SessionKind, raw: Option<&str>) -> Vec<String> {
     let mut i = 0;
     while i < args.len() {
         let flag = args[i].split('=').next().unwrap_or_default();
-        let value = matches!(flag, "--output-format" | "--format" | "--json-schema" | "--output-schema"
-            | "--permission-mode" | "--approval-mode" | "--sandbox" | "--tools" | "--allowedTools"
-            | "--allowed-tools" | "--disallowedTools" | "--disallowed-tools" | "--resume" | "-r"
-            | "--session-id" | "--session" | "-s" | "--mode" | "--prompt-file" | "--mcp-config" | "--color");
-        let switch = matches!(flag, "--print" | "-p" | "--continue" | "--fork-session" | "--fork"
-            | "--json" | "--dangerously-skip-permissions" | "--allow-dangerously-skip-permissions"
-            | "--dangerously-bypass-approvals-and-sandbox" | "--yolo" | "--always-approve"
-            | "--no-session" | "--no-tools" | "--no-skills" | "--no-extensions" | "--no-context-files"
-            | "--no-rules" | "--no-title" | "--no-session-persistence" | "--strict-mcp-config"
-            | "--disable-slash-commands" | "--no-memory" | "--no-plan" | "--no-subagents" | "--no-web"
-            | "--ephemeral" | "--skip-git-repo-check" | "--pure")
-            || (matches!(kind, SessionKind::Pi | SessionKind::Omp) && flag == "-c");
+        let kimi_prompt_value = kind == SessionKind::Kimi && matches!(flag, "--prompt" | "-p" | "-c");
+        let kimi_value = kind == SessionKind::Kimi && matches!(flag, "--input-format" | "--output-format"
+            | "--agent" | "--agent-file" | "--mcp-config-file" | "--skills-dir" | "--work-dir" | "-w"
+            | "--add-dir" | "-S");
+        let value = kimi_prompt_value || kimi_value || matches!(flag, "--output-format" | "--format"
+            | "--json-schema" | "--output-schema" | "--permission-mode" | "--approval-mode" | "--sandbox"
+            | "--tools" | "--allowedTools" | "--allowed-tools" | "--disallowedTools" | "--disallowed-tools"
+            | "--resume" | "-r" | "--session-id" | "--session" | "-s" | "--mode" | "--prompt-file"
+            | "--mcp-config" | "--color");
+        let switch = !kimi_prompt_value && (matches!(flag, "--print" | "-p" | "--continue" | "-C"
+            | "--fork-session" | "--fork" | "--json" | "--dangerously-skip-permissions"
+            | "--allow-dangerously-skip-permissions" | "--dangerously-bypass-approvals-and-sandbox"
+            | "--yolo" | "--always-approve" | "--no-session" | "--no-tools" | "--no-skills"
+            | "--no-extensions" | "--no-context-files" | "--no-rules" | "--no-title"
+            | "--no-session-persistence" | "--strict-mcp-config" | "--disable-slash-commands"
+            | "--no-memory" | "--no-plan" | "--no-subagents" | "--no-web" | "--ephemeral"
+            | "--skip-git-repo-check" | "--pure")
+            || (kind == SessionKind::Kimi && matches!(flag, "--quiet" | "--afk" | "--plan"
+                | "--thinking" | "--no-thinking" | "--acp" | "--wire" | "--final-message-only"))
+            || (matches!(kind, SessionKind::Pi | SessionKind::Omp) && flag == "-c"));
         if value { i += if args[i].contains('=') { 1 } else { 2 }; }
         else if switch { i += 1; }
         else { kept.push(args[i].clone()); i += 1; }
@@ -378,7 +391,7 @@ pub(crate) fn isolated_command(bin: &str, kind: SessionKind, dir: &std::path::Pa
         }
         settings["disableAllHooks"] = json!(true);
     }
-    if kind == SessionKind::Codex { command.arg("exec"); }
+    if kind.is_codex_family() { command.arg("exec"); }
     if kind == SessionKind::Opencode { command.arg("run"); }
     command.args(inherited);
     let stdin = match kind {
@@ -389,16 +402,22 @@ pub(crate) fn isolated_command(bin: &str, kind: SessionKind, dir: &std::path::Pa
                 .arg(schema.to_string()).env_remove("CLAUDECODE");
             true
         }
-        SessionKind::Codex => {
+        SessionKind::Codex | SessionKind::Traex => {
             let schema_path = dir.join("schema.json");
             std::fs::write(&schema_path, schema.to_string()).map_err(|_| "session_title:failed")?;
             command.args(["--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only", "--color", "never", "--json",
                 "--disable", "shell_tool", "--disable", "apps", "--disable", "multi_agent", "-c", "project_doc_max_bytes=0",
                 "-c", "approval_policy=\"never\"", "-c", "web_search=\"disabled\"", "--output-schema"]).arg(schema_path);
             // Local MCP/plugin registrations are unrelated to this text transformation.
-            let home = command_env(&command, "CODEX_HOME").map(PathBuf::from)
-                .or_else(|| crate::host::home_dir().map(|p| p.join(".codex")));
-            if let Some(config) = home.and_then(|p| std::fs::read_to_string(p.join("config.toml")).ok()) {
+            let home = if kind == SessionKind::Codex {
+                command_env(&command, "CODEX_HOME").map(PathBuf::from)
+                    .or_else(|| crate::host::home_dir().map(|p| p.join(".codex")))
+            } else {
+                command_env(&command, "TRAE_HOME").map(PathBuf::from)
+                    .or_else(|| crate::host::home_dir().map(|p| p.join(".trae")))
+            };
+            let config_name = if kind == SessionKind::Traex { "traecli.toml" } else { "config.toml" };
+            if let Some(config) = home.and_then(|p| std::fs::read_to_string(p.join(config_name)).ok()) {
                 if let Ok(doc) = config.parse::<toml_edit::DocumentMut>() {
                     for section in ["mcp_servers", "plugins"] {
                         if let Some(table) = doc.get(section).and_then(toml_edit::Item::as_table_like) {
@@ -432,6 +451,14 @@ pub(crate) fn isolated_command(bin: &str, kind: SessionKind, dir: &std::path::Pa
                 "--no-subagents", "--no-web", "--output-format", "plain"]);
             false
         }
+        SessionKind::Kimi => {
+            // Print mode auto-approves tools, so the one-shot agent must start with an empty tool list.
+            let agent_path = dir.join("title-agent.yaml");
+            std::fs::write(&agent_path, "version: 1\nagent:\n  extend: default\n  name: vela-term-title\n  tools: []\n")
+                .map_err(|_| "session_title:failed")?;
+            command.args(["--print", "--output-format", "text", "--final-message-only", "--agent-file"]).arg(agent_path);
+            true
+        }
         _ => return Err("session_title:no_agent".into()),
     };
     let keys: Vec<_> = command.get_envs().map(|(key, _)| key.to_os_string()).chain(std::env::vars_os().map(|(key, _)| key)).collect();
@@ -457,7 +484,7 @@ pub(crate) fn answer_text(kind: SessionKind, output: &str) -> Result<(String, Va
             .or_else(|| value["result"].as_str().map(str::to_string)).ok_or("session_title:invalid")?;
         return Ok((text, value["usage"].clone()));
     }
-    if matches!(kind, SessionKind::Codex | SessionKind::Opencode) {
+    if kind == SessionKind::Opencode || kind.is_codex_family() {
         let mut text = String::new();
         let mut usage = Value::Null;
         let mut complete = kind == SessionKind::Opencode;
@@ -589,8 +616,10 @@ mod tests {
         assert_eq!(parse_title(&text).unwrap(), "Flow");
         assert_eq!(usage["input_tokens"], 42);
         let reply = "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"title\\\":\\\"Flow\\\"}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"output_tokens\":5}}";
-        assert_eq!(parse_title(&answer_text(SessionKind::Codex, reply).unwrap().0).unwrap(), "Flow");
-        assert!(answer_text(SessionKind::Codex, reply.lines().next().unwrap()).is_err());
+        for kind in [SessionKind::Codex, SessionKind::Traex] {
+            assert_eq!(parse_title(&answer_text(kind, reply).unwrap().0).unwrap(), "Flow");
+            assert!(answer_text(kind, reply.lines().next().unwrap()).is_err());
+        }
         assert!(answer_text(SessionKind::Opencode, r#"{"type":"error"}"#).is_err());
     }
 
@@ -628,6 +657,31 @@ mod tests {
         assert_eq!(command.get_current_dir(), Some(path.as_path()));
         drop(dir);
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn traex_and_kimi_title_commands_use_verified_one_shot_transports() {
+        let (_root, app, _) = fixture();
+        let dir = WorkDir::new(&app).unwrap();
+        let (command, stdin) = title_command("traex", SessionKind::Traex, &dir, None, None, None).unwrap();
+        let args: Vec<_> = command.get_args().map(|arg| arg.to_string_lossy().to_string()).collect();
+        assert!(stdin);
+        assert_eq!(args.first().map(String::as_str), Some("exec"));
+        assert!(args.iter().any(|arg| arg == "--output-schema"));
+        assert!(dir.0.join("schema.json").is_file());
+
+        let (command, stdin) = title_command("kimi", SessionKind::Kimi, &dir, None, None, None).unwrap();
+        let args: Vec<_> = command.get_args().map(|arg| arg.to_string_lossy().to_string()).collect();
+        assert!(stdin);
+        assert!(args.windows(2).any(|arg| arg == ["--print", "--output-format"]));
+        assert!(args.windows(2).any(|arg| arg == ["--final-message-only", "--agent-file"]));
+        let agent = std::fs::read_to_string(dir.0.join("title-agent.yaml")).unwrap();
+        assert!(agent.contains("extend: default"));
+        assert!(agent.contains("tools: []"));
+
+        let kept = task_args(SessionKind::Kimi, Some(
+            "-p old --output-format stream-json --session abc -S old --agent-file custom.yaml --mcp-config '{\"fixture\":{}}' --yolo --config-file keep.toml"));
+        assert_eq!(kept, ["--config-file", "keep.toml"]);
     }
 
     #[test]
@@ -674,9 +728,13 @@ mod tests {
         assert_eq!(pick_agent(&app, &session, 100, None).unwrap_err(), "session_title:agent_unavailable");
         assert_eq!(pick_agent(&app, &session, 100, Some(SessionKind::Codex)).unwrap(), (SessionKind::Codex, bin.clone()));
         session.agent_path = Some(bin.clone());
-        assert_eq!(pick_agent(&app, &session, 100, None).unwrap(), (SessionKind::Claude, bin));
+        assert_eq!(pick_agent(&app, &session, 100, None).unwrap(), (SessionKind::Claude, bin.clone()));
         assert_eq!(pick_agent(&app, &session, 100, Some(SessionKind::Claude)).unwrap().0, SessionKind::Claude);
         assert!(pick_agent(&app, &session, headless::ARG_PROMPT_LIMIT + 1, Some(SessionKind::Pi)).is_err());
+        for kind in [SessionKind::Traex, SessionKind::Kimi] {
+            session.kind = kind;
+            assert_eq!(pick_agent(&app, &session, headless::ARG_PROMPT_LIMIT + 1, None).unwrap(), (kind, bin.clone()));
+        }
         let selection = super::super::spawn_requests::default_selection(&app.db().conn.lock().unwrap(),
             SessionKind::Codex, defaults["agentDefaults"]["codex"]["args"].as_str()).unwrap();
         assert_eq!(selection.model.as_deref(), Some("fallback-model"));
@@ -698,6 +756,8 @@ mod tests {
         }
         let choices = options(&app, &session.id).unwrap();
         assert_eq!(choices["agent"], "claude");
+        let ids: Vec<_> = choices["agents"].as_array().unwrap().iter().map(|spec| spec["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&"traex") && ids.contains(&"kimi"));
         let claude = choices["agents"].as_array().unwrap().iter().find(|s| s["id"] == "claude").unwrap();
         assert_eq!(claude["available"], true);
         assert_eq!(claude["model"], "current-model");

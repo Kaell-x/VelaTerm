@@ -269,6 +269,7 @@ const AGENT_DEFAULT_KINDS: {
 }[] = [
   { kind: "claude", label: "Claude", yolo: "--dangerously-skip-permissions", permVia: "flag" },
   { kind: "codex", label: "Codex", yolo: "--dangerously-bypass-approvals-and-sandbox", permVia: "flag" },
+  { kind: "traex", label: "Traex", yolo: "--dangerously-bypass-approvals-and-sandbox", permVia: "flag" },
   { kind: "opencode", label: "OpenCode", yolo: "", permVia: "env" },
   { kind: "copilot", label: "Copilot", yolo: "--allow-all-tools", permVia: "flag" },
   { kind: "cursor", label: "Cursor", yolo: "--force", permVia: "flag" },
@@ -530,7 +531,7 @@ export function AgentsPanel() {
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end", gap: "var(--space-4, 16px)" }}>
           <div style={{ flex: "1 1 160px", minWidth: 0, color: "var(--text-dim)", fontSize: 12, lineHeight: 1.5 }}>{t("permission.defaultHint")}</div>
           <div style={{ flex: "none", maxWidth: "100%" }}>
-            {["claude", "codex", "opencode"].includes(selKind) ? (
+            {["claude", "codex", "traex", "opencode"].includes(selKind) ? (
               <AgentPermissionSelect key={selKind} kind={selKind} value={cfg.permissionMode}
                 onChange={mode => savePermissionDefault(selKind, mode)} />
             ) : supportsYolo ? (

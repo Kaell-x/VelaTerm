@@ -63,9 +63,9 @@ const GROK_CONTEXT_LIMIT_DEFAULT: u64 = 500_000;
 /// Queries model, context usage, and current tool for the Info panel.
 pub fn context_info(kind: SessionKind, agent_session_id: &str) -> Result<AgentContextInfo, String> {
     if kind == SessionKind::Kiro { return super::kiro_info::context_info(agent_session_id); }
-    if matches!(kind, SessionKind::Codex) {
+    if kind.is_codex_family() {
         let path =
-            resume::find_codex_rollout(agent_session_id).ok_or("Codex rollout file not found")?;
+            resume::find_codex_rollout(kind, agent_session_id).ok_or("Codex rollout file not found")?;
         let tail = read_tail(&path, CONTEXT_TAIL_BYTES)?;
         return Ok(last_codex_context_info(&tail));
     }
@@ -795,9 +795,10 @@ pub(crate) struct Piece {
 pub fn source_path(kind: SessionKind, agent_session_id: &str) -> Option<std::path::PathBuf> {
     match kind {
         SessionKind::Claude => resume::find_claude_transcript(agent_session_id),
-        SessionKind::Codex => resume::find_codex_rollout(agent_session_id),
+        SessionKind::Codex | SessionKind::Traex => resume::find_codex_rollout(kind, agent_session_id),
         SessionKind::Grok => resume::find_grok_updates(agent_session_id),
         SessionKind::Antigravity => crate::agent::antigravity::transcript_path(agent_session_id),
+        SessionKind::Kimi => super::kimi_store::source_path(agent_session_id),
         SessionKind::Pi | SessionKind::Omp => resume::find_pi_session(kind, agent_session_id),
         // Kiro uses identity-aware multi-source reads; other non-file stores and plain terminals have no path.
         _ => None,
@@ -809,13 +810,14 @@ pub fn source_path(kind: SessionKind, agent_session_id: &str) -> Option<std::pat
 pub fn read_at(kind: SessionKind, path: &Path) -> Result<Vec<TranscriptMessage>, String> {
     match kind {
         SessionKind::Claude => parse_file(path, parse_claude_line),
-        SessionKind::Codex => parse_file(path, parse_codex_line),
+        SessionKind::Codex | SessionKind::Traex => parse_file(path, parse_codex_line),
         SessionKind::Grok => parse_grok_file(path),
         SessionKind::Pi | SessionKind::Omp => parse_pi_file(path),
         SessionKind::Antigravity => {
             let content = crate::agent::history_store::compat::read_path(path)?;
             Ok(merge(antigravity_pieces(&content).into_iter()))
         }
+        SessionKind::Kimi => Ok(merge(super::kimi_store::pieces_at(path)?.into_iter())),
         _ => Err("Transcript parsing is not supported for this session kind".to_string()),
     }
 }
@@ -891,8 +893,8 @@ pub fn read(kind: SessionKind, agent_session_id: &str) -> Result<Vec<TranscriptM
             let content = resume::read_claude_transcript(agent_session_id)?;
             Ok(merge(content.lines().filter_map(parse_claude_line)))
         }
-        SessionKind::Codex => {
-            let (_, content) = resume::read_codex_rollout_chain(agent_session_id)?;
+        SessionKind::Codex | SessionKind::Traex => {
+            let (_, content) = resume::read_codex_rollout_chain(kind, agent_session_id)?;
             Ok(merge(content.lines().filter_map(parse_codex_line)))
         }
         SessionKind::Opencode => {
@@ -925,7 +927,7 @@ pub fn read(kind: SessionKind, agent_session_id: &str) -> Result<Vec<TranscriptM
             Err("Transcript view is not supported for crush sessions yet".to_string())
         }
         SessionKind::Kimi => {
-            Err("Transcript view is not supported for kimi sessions yet".to_string())
+            Ok(merge(super::kimi_store::pieces(agent_session_id)?.into_iter()))
         }
         SessionKind::Kiro => {
             Ok(super::kiro_store::read(agent_session_id)?.messages?.into_iter().map(|message| TranscriptMessage {

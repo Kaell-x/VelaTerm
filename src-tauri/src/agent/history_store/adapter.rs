@@ -240,7 +240,7 @@ pub(super) fn store_record(state:&mut State,kind:SessionKind,scanned:&Scanned,re
     if super::children::is_claude_child(source) {projected["isSidechain"]=json!(false);}
     let raw=projected.to_string();
     let events=match kind {
-        SessionKind::Codex=>export::codex_events(&raw),
+        SessionKind::Codex|SessionKind::Traex=>export::codex_events(&raw),
         SessionKind::Claude=>export::claude_events(&raw),
         SessionKind::Pi|SessionKind::Omp=>export::pi_events(&raw),
         SessionKind::Grok=>crate::agent::transcript::grok_pieces(&projected).into_iter().map(|piece| {
@@ -286,7 +286,7 @@ pub(super) fn store_record(state:&mut State,kind:SessionKind,scanned:&Scanned,re
         super::children::annotate(kind,record,&mut row)?;
         write_row(state,scanned,record,local,call_id.as_deref(),&row,refs);
         attach(state,&id,label,&paths,refs);
-        if kind==SessionKind::Codex {
+        if kind.is_codex_family() {
             if row["kind"]=="user" {state.kv.insert(CODEX_PENDING_USER.into(),id.clone());}
             if let Some(call)=&call_id {
                 let open=format!("{call}\n{id}");
@@ -299,12 +299,12 @@ pub(super) fn store_record(state:&mut State,kind:SessionKind,scanned:&Scanned,re
         }
     }
     // Completed native items carry historical diffs that response_item does not include.
-    if kind==SessionKind::Codex && matches!(value.pointer("/payload/type").and_then(Value::as_str),Some("item_completed"|"itemCompleted")) {
+    if kind.is_codex_family() && matches!(value.pointer("/payload/type").and_then(Value::as_str),Some("item_completed"|"itemCompleted")) {
         if let Some(item)=value.pointer("/payload/item") {
-            supersede_codex_response(state,source,item);
+            supersede_codex_response(kind,state,source,item);
             super::children::codex_record(state,source,record,item)?;
             if item["type"].as_str().is_some_and(|kind|kind.replace('_',"").eq_ignore_ascii_case("userMessage")) {
-                codex_user(state,scanned,record,refs,"/payload/item")?;
+                codex_user(kind,state,scanned,record,refs,"/payload/item")?;
             }
             if let Some(mut row)=crate::agent::chat::history::recorded_codex_item_row(item,value["timestamp"].as_str())
                 .and_then(|row|serde_json::to_value(row).ok()) {
@@ -367,24 +367,24 @@ pub(super) fn item_id(kind:SessionKind,source:&RegisteredSource,id:&str,prose:bo
 /// the user message just before a completed user message, and a generic call whose bracket holds a
 /// completed tool item. Superseded rows stay addressable, because transcript prose, exports and
 /// search still read the response items and authorize their fields through these rows.
-fn supersede_codex_response(state:&mut State,source:&RegisteredSource,item:&Value) {
+fn supersede_codex_response(kind:SessionKind,state:&mut State,source:&RegisteredSource,item:&Value) {
     let category=item["type"].as_str().unwrap_or_default().replace('_',"").to_ascii_lowercase();
     let Some(native)=item["id"].as_str() else {return;};
     if category=="usermessage" {
         if let Some(id)=state.kv.get(CODEX_PENDING_USER).filter(|id|!id.is_empty()).cloned() {
-            state.superseded.insert(id,item_id(SessionKind::Codex,source,native,true));state.kv.insert(CODEX_PENDING_USER.into(),String::new());
+            state.superseded.insert(id,item_id(kind,source,native,true));state.kv.insert(CODEX_PENDING_USER.into(),String::new());
         }
     }
     if matches!(category.as_str(),"filechange"|"commandexecution"|"mcptoolcall"|"dynamictoolcall"|"websearch") {
         if let Some((_,id))=state.kv.get(CODEX_OPEN_CALL).and_then(|value|value.split_once('\n')).map(|(call,id)|(call.to_owned(),id.to_owned())) {
-            state.superseded.insert(id,item_id(SessionKind::Codex,source,native,false));
+            state.superseded.insert(id,item_id(kind,source,native,false));
         }
     }
 }
 
 /// A completed Codex user message: its text parts form one user row whose complete value replaces
 /// the pieces it may have been appended from.
-fn codex_user(state:&mut State,scanned:&Scanned,record:&Record,refs:&Refs,root:&str) -> Result<(),String> {
+fn codex_user(kind:SessionKind,state:&mut State,scanned:&Scanned,record:&Record,refs:&Refs,root:&str) -> Result<(),String> {
     let item=record.value.pointer(root).ok_or("unsupported_record: native user item is missing")?;
     let native=item["id"].as_str().filter(|id|!id.is_empty() && id.len()<=200).ok_or("unsupported_record: native user item has no bounded identity")?;
     let content=item["content"].as_array().ok_or("unsupported_record: native user content is unavailable")?;
@@ -397,7 +397,7 @@ fn codex_user(state:&mut State,scanned:&Scanned,record:&Record,refs:&Refs,root:&
         let part=record.value.pointer(path).and_then(Value::as_str).ok_or("unsupported_record: native user text is invalid")?;
         let remaining=PREVIEW_BYTES.saturating_sub(text.len());text.push_str(&preview(part,remaining));
     }}
-    let id=item_id(SessionKind::Codex,scanned.source,native,true);
+    let id=item_id(kind,scanned.source,native,true);
     let row=json!({"id":id,"kind":"user","text":text,"images":[],"bodySizeBytes":size,"bodyAvailable":size>text.len() as u64});
     write_row(state,scanned,record,0,Some(native),&row,refs);
     state.detach(&id,"body");attach(state,&id,"body",&selected,refs);

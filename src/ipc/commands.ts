@@ -217,7 +217,7 @@ export interface TranscriptMessage {
 }
 
 /**
- * Reads a parsed Claude/Codex conversation. Rejects for missing/unsupported records so callers fall back to recording playback.
+ * Reads a parsed Claude/Codex-family conversation. Rejects for missing/unsupported records so callers fall back to recording playback.
  */
 export function readAgentTranscript(
   sessionId: string,

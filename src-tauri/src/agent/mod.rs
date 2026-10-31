@@ -23,6 +23,7 @@ pub mod hook_bridge;
 pub mod inject;
 pub mod install;
 pub mod kimi;
+pub mod kimi_store;
 pub mod kiro;
 pub mod kiro_store;
 pub mod kiro_info;

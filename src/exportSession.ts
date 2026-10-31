@@ -16,9 +16,9 @@ export const exportProgressSnapshot=()=>progress;
 export function subscribeExportProgress(listener:()=>void) {progressListeners.add(listener);return ()=>{progressListeners.delete(listener);};}
 function updateProgress(next:readonly ExportProgress[]) {progress=next;for (const listener of progressListeners) listener();}
 
-/** Whether context can be exported: a local agent session with a parseable transcript (Claude/Codex with a captured ID). */
+/** Whether context can be exported: a local agent session with a parseable transcript and captured ID. */
 export function canExportContext(s: Pick<Session, "kind" | "agentSessionId">): boolean {
-  return (s.kind === "claude" || s.kind === "codex") && !!s.agentSessionId;
+  return (s.kind === "claude" || s.kind === "codex" || s.kind === "traex") && !!s.agentSessionId;
 }
 
 /** Current local time formatted as `YYYYMMDD_HHmm` for filenames and `YYYY-MM-DD HH:mm` for document headers. */

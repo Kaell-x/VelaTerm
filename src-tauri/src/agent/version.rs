@@ -197,10 +197,11 @@ mod tests {
     }
 
     #[test]
-    fn every_chat_agent_has_an_official_source() {
+    fn release_feeds_cover_supported_agents_and_leave_traex_unchecked() {
         for kind in [SessionKind::Claude, SessionKind::Codex, SessionKind::Opencode, SessionKind::Pi, SessionKind::Omp, SessionKind::Antigravity] {
             assert!(source(kind).is_some());
         }
+        assert!(source(SessionKind::Traex).is_none());
         assert!(source(SessionKind::Terminal).is_none());
     }
 

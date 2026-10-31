@@ -99,8 +99,8 @@ pub fn export_markdown(
                 .ok_or("Claude transcript file not found")?;
             (path, claude_events(&resume::read_claude_transcript(agent_session_id)?))
         }
-        SessionKind::Codex => {
-            let (path, content) = resume::read_codex_rollout_chain(agent_session_id)?;
+        SessionKind::Codex | SessionKind::Traex => {
+            let (path, content) = resume::read_codex_rollout_chain(kind, agent_session_id)?;
             (path, codex_events(&content))
         }
         SessionKind::Opencode => {

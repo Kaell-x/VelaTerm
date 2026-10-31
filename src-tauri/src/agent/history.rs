@@ -90,7 +90,7 @@ fn jsonl(path: &Path, kind: SessionKind, directory: &Path) -> Result<Option<Hist
         let line = line.map_err(|e| e.to_string())?;
         bytes_read += line.len();
         let Ok(v) = serde_json::from_str::<Value>(&line) else { continue; };
-        if kind == SessionKind::Codex {
+        if kind.is_codex_family() {
             if v["type"] == "session_meta" {
                 // Subagent threads are helpers of another conversation, like Claude sidechains.
                 if !super::resume::is_user_thread_payload(&v["payload"]) { return Ok(None); }
@@ -231,6 +231,7 @@ fn discover_inner(ctx: &AppCtx, project_id: &str) -> Result<History, String> {
     let directory = project_directory(&ctx.db().conn.lock().unwrap(), project_id)?;
     let home = crate::host::home_dir().ok_or("Home directory is unavailable")?;
     let codex = super::resume::codex_home().ok_or("Codex home is unavailable")?;
+    let traex = super::resume::codex_home_for(SessionKind::Traex).ok_or("Traex home is unavailable")?;
     let claude = super::resume::claude_home().ok_or("Claude home is unavailable")?;
     let opencode = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from)
         .unwrap_or_else(|| home.join(".local/share")).join("opencode");
@@ -238,6 +239,7 @@ fn discover_inner(ctx: &AppCtx, project_id: &str) -> Result<History, String> {
     let mut warnings = Vec::new();
     for (label, result) in [
         ("Codex", scan_jsonl(&codex.join("sessions"), SessionKind::Codex, Path::new(&directory), &mut sessions)),
+        ("Traex", scan_jsonl(&traex.join("sessions"), SessionKind::Traex, Path::new(&directory), &mut sessions)),
         ("Claude", scan_jsonl(&claude.join("projects"), SessionKind::Claude, Path::new(&directory), &mut sessions)),
         ("OpenCode", scan_opencode(&opencode, Path::new(&directory), &mut sessions)),
     ] {
@@ -247,22 +249,25 @@ fn discover_inner(ctx: &AppCtx, project_id: &str) -> Result<History, String> {
         Ok(roots) => scan_kiro(&roots, Path::new(&directory), &mut sessions, &mut warnings),
         Err(e) => warnings.push(e),
     }
-    // Prefer user-assigned Codex names when the optional native title index is available.
-    match std::fs::File::open(codex.join("session_index.jsonl")) {
-        Ok(file) => for line in std::io::BufReader::new(file).lines() {
-            let Ok(line) = line else { warnings.push("Codex: Cannot read the session title index".into()); break; };
-            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue; };
-            if let (Some(id), Some(name)) = (v["id"].as_str(), v["thread_name"].as_str()) {
-                let name = title(name);
-                if !name.is_empty() {
-                    for s in sessions.iter_mut().filter(|s| s.kind == SessionKind::Codex && s.agent_session_id == id) {
-                        s.title = name.clone();
+    // Prefer user-assigned native names when the optional title index is available.
+    for (kind, root) in [(SessionKind::Codex, &codex), (SessionKind::Traex, &traex)] {
+        let label = super::launch_options::label(kind);
+        match std::fs::File::open(root.join("session_index.jsonl")) {
+            Ok(file) => for line in std::io::BufReader::new(file).lines() {
+                let Ok(line) = line else { warnings.push(format!("{label}: Cannot read the session title index")); break; };
+                let Ok(v) = serde_json::from_str::<Value>(&line) else { continue; };
+                if let (Some(id), Some(name)) = (v["id"].as_str(), v["thread_name"].as_str()) {
+                    let name = title(name);
+                    if !name.is_empty() {
+                        for s in sessions.iter_mut().filter(|s| s.kind == kind && s.agent_session_id == id) {
+                            s.title = name.clone();
+                        }
                     }
                 }
-            }
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
-        Err(_) => warnings.push("Codex: Cannot read the session title index".into()),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+            Err(_) => warnings.push(format!("{label}: Cannot read the session title index")),
+        }
     }
     let conn = ctx.db().conn.lock().unwrap();
     let existing = repo::list_all_sessions(&conn)?;

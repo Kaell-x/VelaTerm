@@ -126,12 +126,12 @@ fn child(parent:Branch,row:&str,seen:&mut HashSet<(String,String)>) -> Result<Br
             let source=parent.store.register(SessionKind::Claude,Segment {path,native_id:native.clone(),end_byte:None,end_ordinal:None})?;
             (vec![source],native,None)
         },
-        SessionKind::Codex=>{
-            let resolved=source::resolve(SessionKind::Codex,&id)?;
+        SessionKind::Codex|SessionKind::Traex=>{
+            let resolved=source::resolve(parent.kind,&id)?;
             // The child's own completed items form its work log; inherited ancestor intervals belong
             // to its private context and are not recursively presented under the parent's Task card.
             let mut sources=Vec::new();for segment in resolved.segments.into_iter().filter(|segment|segment.native_id==id) {
-                sources.push(parent.store.register(SessionKind::Codex,segment)?);
+                sources.push(parent.store.register(parent.kind,segment)?);
             }(sources,id.clone(),resolved.error)
         },
         SessionKind::Opencode=>{

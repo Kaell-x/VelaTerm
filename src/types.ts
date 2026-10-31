@@ -5,12 +5,12 @@ export type SessionId = string;
 export type SessionStatus = "idle" | "running" | "exited" | "error";
 
 /** AI agent kind detected within a session. */
-export type AgentKind = "claude" | "codex" | "opencode" | "copilot" | "cursor" | "antigravity" | "cline" | "pi" | "omp" | "crush" | "kimi" | "kiro" | "grok" | "zoo";
+export type AgentKind = "claude" | "codex" | "traex" | "opencode" | "copilot" | "cursor" | "antigravity" | "cline" | "pi" | "omp" | "crush" | "kimi" | "kiro" | "grok" | "zoo";
 
 /**
  * Session kind, which determines launch behavior.
  * - terminal: plain terminal.
- * - claude / codex / opencode / copilot / cursor / antigravity / cline / pi / omp: agents launched locally by
+ * - claude / codex / traex / opencode / copilot / cursor / antigravity / cline / pi / omp: agents launched locally by
  *   vlx-term with authoritative status reporting injected through official Claude/Codex hooks, opencode plugin
  *   events, Copilot CLI hook files, Cursor CLI hook files, Antigravity (agy) command hooks merged into the
  *   user's global hooks.json, Cline CLI scripts injected through CLINE_HOOKS_DIR, Pi and OMP `-e` extension
@@ -18,11 +18,16 @@ export type AgentKind = "claude" | "codex" | "opencode" | "copilot" | "cursor" |
  *   PreToolUse hook injected through Crush's shadow configuration. Crush exposes only PreToolUse and therefore
  *   reports working only; idle state comes from screen detection.
  */
-export type SessionKind = "terminal" | "claude" | "codex" | "opencode" | "copilot" | "cursor" | "antigravity" | "cline" | "pi" | "omp" | "crush" | "kimi" | "kiro" | "grok" | "zoo" | "browser";
+export type SessionKind = "terminal" | "claude" | "codex" | "traex" | "opencode" | "copilot" | "cursor" | "antigravity" | "cline" | "pi" | "omp" | "crush" | "kimi" | "kiro" | "grok" | "zoo" | "browser";
+
+/** Codex-compatible CLI, app-server, and native rollout behavior. */
+export function isCodexFamilyKind(kind: SessionKind): boolean {
+  return kind === "codex" || kind === "traex";
+}
 
 /** Agents with permission controls. Claude/Codex/OpenCode obtain their choices from the backend;
  * other supported agents expose a bypass switch. OpenCode injects configuration rather than a flag. */
-export const PERMISSION_TOGGLE_KINDS: SessionKind[] = ["claude", "codex", "opencode", "copilot", "cursor", "antigravity", "cline", "omp", "crush", "kimi", "kiro", "grok", "zoo"];
+export const PERMISSION_TOGGLE_KINDS: SessionKind[] = ["claude", "codex", "traex", "opencode", "copilot", "cursor", "antigravity", "cline", "omp", "crush", "kimi", "kiro", "grok", "zoo"];
 export function supportsPermissionToggle(kind: SessionKind): boolean {
   return PERMISSION_TOGGLE_KINDS.includes(kind);
 }
@@ -40,7 +45,7 @@ export function supportsPermissionToggle(kind: SessionKind): boolean {
 export type SessionEngine = "tui" | "chat";
 
 /** Agent kinds the chat engine can drive. The backend refuses the rest, so nothing may offer them. */
-export const CHAT_ENGINE_KINDS: SessionKind[] = ["claude", "codex", "opencode", "pi", "omp", "antigravity"];
+export const CHAT_ENGINE_KINDS: SessionKind[] = ["claude", "codex", "traex", "opencode", "pi", "omp", "antigravity"];
 export function supportsChatEngine(kind: SessionKind): boolean {
   return CHAT_ENGINE_KINDS.includes(kind);
 }
@@ -167,7 +172,7 @@ export interface Session {
    *  default and then to a PATH lookup; this is what lets two sessions of one kind run different binaries. */
   agentPath?: string | null;
   hotkey?: string | null;
-  /** Last remembered native agent session ID for automatic Claude/Codex resume; the frontend only passes/displays it. */
+  /** Last remembered native agent session ID for automatic resume; the frontend only passes/displays it. */
   agentSessionId?: string | null;
   /** Parent session ID; empty for a top-level session, otherwise this session is nested below that parent. */
   parentSessionId?: string | null;
@@ -298,7 +303,7 @@ export function effectiveStatus(rt: SessionRuntime | undefined): DisplayStatus {
   if (rt.status === "exited" || rt.status === "error") return rt.status;
   if (rt.agent && rt.agentState) return rt.agentState;
   if (
-    rt.agent === "codex" &&
+    rt.agent && isCodexFamilyKind(rt.agent) &&
     rt.agentStateSource === "hooks" &&
     !rt.agentHookReady
   ) {

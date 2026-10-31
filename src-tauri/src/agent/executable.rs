@@ -626,7 +626,7 @@ mod tests {
             defaults.insert(option.id.as_str().into(), serde_json::json!({"path":bin}));
             expected.push(parent);
         }
-        assert_eq!(expected.len(), 14);
+        assert_eq!(expected.len(), 15);
         let preset_dir = dir.join("preset");
         std::fs::create_dir_all(&preset_dir).unwrap();
         let preset_bin = preset_dir.join("custom-agent");

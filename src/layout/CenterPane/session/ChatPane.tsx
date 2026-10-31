@@ -110,7 +110,7 @@ import { PermissionCard, type PermissionAnswer } from "./permissionCards";
 import { isMode, type Mode } from "./permissions";
 import { useTermStore } from "../../../store/termStore";
 import { effectivePermissionMode } from "../../../store/settings";
-import { effectiveStatus, supportsPermissionToggle, type Session } from "../../../types";
+import { effectiveStatus, isCodexFamilyKind, supportsPermissionToggle, type Session } from "../../../types";
 import { kindIconEl } from "../../sessionViewers/sessionMeta";
 import { assistantLabel } from "../../sessionViewers/TranscriptViewer";
 import { ChatImageView, ErrorRow, WorkingRow } from "./rows";
@@ -194,7 +194,7 @@ function levelsOf(ladder: readonly string[], kind: Session["kind"]): string[] {
 
 function storedMode(session: Pick<Session, "kind" | "permissionMode">): Mode {
   const stored = session.permissionMode;
-  if (session.kind === "codex") {
+  if (isCodexFamilyKind(session.kind)) {
     if (stored === "skip" || stored === "full-access") return "full-access";
     return stored === "read-only" ? "read-only" : "auto";
   }
@@ -229,7 +229,7 @@ function isCollaborationMode(value: string | null | undefined): value is Collabo
 
 function storedCollaborationMode(session: Session): CollaborationMode {
   if (isCollaborationMode(session.collaborationMode)) return session.collaborationMode;
-  return session.kind === "codex" ? "default" : "";
+  return isCodexFamilyKind(session.kind) ? "default" : "";
 }
 
 /** How the chip and its menu name one preset: Codex modes by their translated names, agents by their own. */
@@ -239,7 +239,7 @@ function collaborationLabel(
   value: string,
   t: ReturnType<typeof useT>,
 ): string {
-  if (kind === "codex" && (value === "default" || value === "plan")) {
+  if (isCodexFamilyKind(kind) && (value === "default" || value === "plan")) {
     return t(`chat.collaborationMode.${value}` as "chat.collaborationMode.default");
   }
   const name = preset?.name ?? value;
@@ -855,7 +855,7 @@ export function ChatPane({
         if (isCollaborationMode(snapshot.collaborationMode)) {
           setCollaborationMode(snapshot.collaborationMode);
         }
-        if (session.kind === "codex") {
+        if (isCodexFamilyKind(session.kind)) {
           setServiceTier(snapshot.serviceTier ?? "");
           setPersonality(snapshot.personality ?? "");
         }
@@ -1608,7 +1608,7 @@ export function ChatPane({
 
   // Codex opens its thread before receiving input. Claude reports its native session only after the
   // first message, so translated submissions must use the ordinary process startup for other agents.
-  const startTranslatedAgent = session.kind === "codex" ? ensureStarted : startAgent;
+  const startTranslatedAgent = isCodexFamilyKind(session.kind) ? ensureStarted : startAgent;
 
   /**
    * Send what is typed, or decide what happens to it when the agent is busy.
@@ -1688,8 +1688,8 @@ export function ChatPane({
         : null;
     const commandSupported =
       chatCommand?.[1] === "compact"
-        ? session.kind === "codex" || session.kind === "pi" || session.kind === "omp"
-        : session.kind === "codex";
+        ? isCodexFamilyKind(session.kind) || session.kind === "pi" || session.kind === "omp"
+        : isCodexFamilyKind(session.kind);
     if (chatCommand && commandSupported) {
       const [, name, args] = chatCommand;
       setError(null);
@@ -1999,7 +1999,7 @@ export function ChatPane({
       .catch((err) => setError(String(err)));
   };
   // Offered only where the catalogue says the model has a faster tier, or honours a personality.
-  const codexModel = session.kind === "codex" ? catalogue.find((m) => m.id === model) : undefined;
+  const codexModel = isCodexFamilyKind(session.kind) ? catalogue.find((m) => m.id === model) : undefined;
   const serviceTierOptions: ChipOption<string>[] =
     codexModel?.serviceTiers?.length
       ? [
@@ -2056,7 +2056,7 @@ export function ChatPane({
       { name: "clear", description: t("chat.command.clearDescription") },
     ];
     // What Codex's own interface offers as commands and this pane asks for through requests of its own.
-    if (session.kind === "codex") {
+    if (isCodexFamilyKind(session.kind)) {
       local.push(
         { name: "compact", description: t("chat.command.compactDescription") },
         {
@@ -2243,7 +2243,7 @@ export function ChatPane({
       value: preset.mode,
       label: collaborationLabel(session.kind, preset, preset.mode, t),
       hint:
-        session.kind === "codex" && (preset.mode === "default" || preset.mode === "plan")
+        isCodexFamilyKind(session.kind) && (preset.mode === "default" || preset.mode === "plan")
           ? t(`chat.collaborationMode.${preset.mode}Hint` as "chat.collaborationMode.defaultHint")
           : preset.description,
     }),
@@ -2390,8 +2390,8 @@ export function ChatPane({
   // A chip the user turned on is offered whenever it exists for this agent kind. Between turns the agent
   // process is away, so MCP and Tasks are disabled rather than dropped: a chip that comes and goes with
   // the process cannot be found by someone who just switched it on.
-  if (session.kind === "claude" || session.kind === "codex") composerChips.push({ id: "mcp", node: (
-    <McpChip sessionId={session.id} codex={session.kind === "codex"} disabled={!engineRunning} />
+  if (session.kind === "claude" || isCodexFamilyKind(session.kind)) composerChips.push({ id: "mcp", node: (
+    <McpChip sessionId={session.id} codex={isCodexFamilyKind(session.kind)} disabled={!engineRunning} />
   ) });
   if (session.kind === "claude") composerChips.push({ id: "chrome", node: (
     <ControlChip

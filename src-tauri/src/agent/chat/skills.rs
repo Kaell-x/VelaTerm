@@ -32,7 +32,7 @@ pub fn codex_commands(result: &Value) -> Result<Vec<Value>, String> {
     let mut names = HashSet::new();
     for group in groups {
         if group.get("errors").and_then(Value::as_array).is_some_and(|errors| !errors.is_empty()) {
-            return Err("Codex could not load all skills. Check the skill files and reopen the completion menu.".into());
+            return Err("The agent could not load all skills. Check the skill files and reopen the completion menu.".into());
         }
         let skills = group.get("skills").and_then(Value::as_array)
             .ok_or("Codex returned an invalid skill catalogue")?;
@@ -67,7 +67,7 @@ pub fn needs_alias_lookup(kind: SessionKind, text: &str) -> bool {
     let text = text.trim_start();
     match kind {
         SessionKind::Claude => text.starts_with('$'),
-        SessionKind::Codex => text.strip_prefix('/').is_some_and(|rest| {
+        SessionKind::Codex | SessionKind::Traex => text.strip_prefix('/').is_some_and(|rest| {
             !is_local_command(rest.split_whitespace().next().unwrap_or(""))
         }),
         _ => false,
@@ -121,7 +121,7 @@ pub fn lookup(kind: SessionKind, bin: &str, cwd: Option<&str>, args: &[String]) 
     let mut command = crate::host::command(bin);
     crate::agent::executable::prepare_command(&mut command, bin);
     match kind {
-        SessionKind::Codex => { command.arg("app-server").args(crate::agent::codex_models::app_server_args(args)); }
+        SessionKind::Codex | SessionKind::Traex => { command.arg("app-server").args(crate::agent::codex_models::app_server_args(args)); }
         SessionKind::Claude => {
             // The probe sends no turn and runs no tool, so its permission mode is moot; `default` is stated
             // only because a launch never leaves it to the CLI's settings.
@@ -142,7 +142,7 @@ pub fn lookup(kind: SessionKind, bin: &str, cwd: Option<&str>, args: &[String]) 
                 if tx.send(line).is_err() { break; }
             }
         });
-        let init = if kind == SessionKind::Codex { codex_protocol::initialize("skills_init") }
+        let init = if kind.is_codex_family() { codex_protocol::initialize("skills_init") }
             else { protocol::control_request("skills_init", protocol::initialize()) };
         writeln!(stdin, "{init}").and_then(|_| stdin.flush()).map_err(|e| e.to_string())?;
         let deadline = Instant::now() + Duration::from_secs(20);

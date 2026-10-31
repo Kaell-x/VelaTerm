@@ -100,7 +100,7 @@ import type {
   SessionKind,
   SessionRuntime,
 } from "../types";
-import { AGENT_STATES, effectiveStatus, matchesAgentState } from "../types";
+import { AGENT_STATES, effectiveStatus, isCodexFamilyKind, matchesAgentState } from "../types";
 import {
   CLEAN_IMAGES_KEY,
   NOTIFY_KEY,
@@ -3784,11 +3784,11 @@ export const useTermStore = create<TermStore>((set, get) => ({
         if (!legacy) break;
         // Accept structured hook/notify state directly; full-authority locking is handled below.
         next.agentState = signal.state;
-        if (prev.agent === "codex" && signal.authoritative)
+        if (prev.agent && isCodexFamilyKind(prev.agent) && signal.authoritative)
           next.agentHookReady = true;
-        // Legacy Codex notify reports only waiting and cannot lock authority. Lifecycle hooks mark every phase
-        // authoritative, after which screen/busy fallbacks cannot overwrite Stop's waiting state.
-        if (prev.agent !== "codex" || signal.authoritative)
+        // Legacy Codex-family notify reports only waiting and cannot lock authority. Lifecycle hooks mark every
+        // phase authoritative, after which screen/busy fallbacks cannot overwrite Stop's waiting state.
+        if (!prev.agent || !isCodexFamilyKind(prev.agent) || signal.authoritative)
           next.authoritative = true;
         // Track working outside reactive state for screen-transition prerequisites without defeating deduplication.
         if (signal.state === "working") {
@@ -3830,7 +3830,7 @@ export const useTermStore = create<TermStore>((set, get) => ({
         // so screen/output guesses can never win a startup race. Clear any stale state replayed by hot reload;
         // the cached lifecycle snapshot follows this agent marker and restores the latest real hook state.
         next.agent = signal.agent;
-        if (signal.agent === "codex") {
+        if (signal.agent && isCodexFamilyKind(signal.agent)) {
           next.agentStateSource = signal.stateSource ?? "legacy";
           next.authoritative = signal.stateSource === "hooks";
           next.agentState = null;
@@ -3846,7 +3846,7 @@ export const useTermStore = create<TermStore>((set, get) => ({
       case "hook_ready":
         if (!legacy) break;
         // SessionStart proves the modern Codex hook chain without inventing an activity state or notification.
-        if (prev.agent === "codex" && prev.agentStateSource === "hooks") {
+        if (prev.agent && isCodexFamilyKind(prev.agent) && prev.agentStateSource === "hooks") {
           next.agentHookReady = true;
         }
         break;
@@ -3862,9 +3862,9 @@ export const useTermStore = create<TermStore>((set, get) => ({
         next.busy = signal.busy;
         if (!legacy) break;
         // Use activity-based working/waiting only for fallback agents before an authoritative event arrives.
-        // Codex never consumes this signal: modern versions are hook-only, while legacy output does not justify
-        // pretending that an exact working/waiting state is known.
-        if (prev.agent && prev.agent !== "codex" && !prev.authoritative) {
+        // Codex-family agents never consume this signal: modern versions are hook-only, while legacy output
+        // does not justify pretending that an exact working/waiting state is known.
+        if (prev.agent && !isCodexFamilyKind(prev.agent) && !prev.authoritative) {
           next.agentState = signal.busy ? "working" : "waiting";
           if (signal.busy) next.everWorked = true;
         }
@@ -3939,9 +3939,9 @@ export const useTermStore = create<TermStore>((set, get) => ({
     const rt = get().runtimes[id];
     if (!rt) return;
 
-    // Codex state comes only from official lifecycle hooks/notify. Reading its terminal screen is intentionally
-    // unsupported even for legacy versions; absent events remain running/unavailable rather than guessed.
-    if (rt.agent === "codex") return;
+    // Codex-family state comes only from official lifecycle hooks/notify. Reading terminal screens is
+    // intentionally unsupported even for legacy versions; absent events remain running/unavailable.
+    if (rt.agent && isCodexFamilyKind(rt.agent)) return;
 
     // Once authoritative hooks arrive, ignore screen detection; it serves fallback and pre-hook startup only.
     if (rt.authoritative) return;

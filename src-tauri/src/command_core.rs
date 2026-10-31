@@ -51,6 +51,7 @@ fn next_chat_session_name(
     let label = match kind {
         SessionKind::Claude => "Claude",
         SessionKind::Codex => "Codex",
+        SessionKind::Traex => "Traex",
         SessionKind::Opencode => "OpenCode",
         _ => {
             return Err("Only Claude, Codex, and OpenCode chat sessions can be cleared".to_string())
@@ -1120,7 +1121,7 @@ fn prepare_chat_account(ctx: &AppCtx, session_id: &str) -> Result<(), String> {
     {
         let conn = ctx.db().conn.lock().unwrap();
         let session = repo::get_session(&conn, session_id)?.ok_or("Session not found")?;
-        if !matches!(session.kind, SessionKind::Codex | SessionKind::Claude)
+        if !matches!(session.kind, SessionKind::Codex | SessionKind::Traex | SessionKind::Claude)
             || session.engine != "chat"
         {
             return Err(
@@ -1580,7 +1581,7 @@ pub fn chat_models(ctx: &AppCtx, session_id: &str) -> Result<serde_json::Value, 
             };
             serde_json::to_value(models)
         }
-        SessionKind::Codex => {
+        SessionKind::Codex | SessionKind::Traex => {
             if let Some(models) = ctx.chat().live_codex_models(session_id) {
                 return serde_json::to_value(models?).map_err(|e| e.to_string());
             }
@@ -1662,7 +1663,7 @@ pub fn chat_commands(ctx: &AppCtx, session_id: &str) -> Result<Vec<serde_json::V
         return Ok(commands);
     }
     let session = session_settings::session(ctx, session_id)?;
-    if !matches!(session.kind, SessionKind::Codex | SessionKind::Claude) {
+    if !matches!(session.kind, SessionKind::Codex | SessionKind::Traex | SessionKind::Claude) {
         return Ok(Vec::new());
     }
     let root = {

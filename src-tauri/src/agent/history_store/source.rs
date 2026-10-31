@@ -54,8 +54,8 @@ pub struct Resolved {
 
 pub fn resolve(kind: SessionKind, id: &str) -> Result<Resolved, String> {
     match kind {
-        SessionKind::Codex => {
-            resolve_codex(id, &resume::find_codex_rollout)
+        SessionKind::Codex | SessionKind::Traex => {
+            resolve_codex(id, &|id| resume::find_codex_rollout(kind, id))
         }
         SessionKind::Claude => Ok(Resolved {segments:vec![Segment {
             path: resume::find_claude_transcript(id).ok_or("source_missing: Claude transcript file not found")?,

@@ -129,7 +129,9 @@ export function MobileTerminal({
             "term.starting",
             session.kind === "codex"
               ? "Codex"
-              : session.kind === "opencode"
+              : session.kind === "traex"
+                ? "Traex"
+                : session.kind === "opencode"
                 ? "OpenCode"
                 : session.kind === "copilot"
                   ? "Copilot"
