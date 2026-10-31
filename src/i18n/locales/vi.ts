@@ -1467,6 +1467,7 @@ const vi: typeof en = {
   "doc.saving": "Đang lưu…",
   "doc.overwriteConfirm": "Đã có tệp trùng tên. Nhấp “Ghi đè” để thay thế.",
   "doc.saveTooltip": "Lưu",
+  "doc.copyReference": "Sao chép tham chiếu",
   "doc.externalChanged":
     "Tệp đã bị sửa trên ổ đĩa (bạn có thay đổi cục bộ chưa lưu).",
   "doc.reloadDiscard": "Tải lại (hủy thay đổi của tôi)",

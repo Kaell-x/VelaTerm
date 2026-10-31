@@ -12,7 +12,7 @@ import { useTermStore } from "../../../store/termStore";
 export const SessionLinkDirectory = createContext<string | undefined>(undefined);
 
 type LinkTarget =
-  | { kind: "file"; path: string }
+  | { kind: "file"; path: string; line?: number }
   | { kind: "external"; url: string }
   | { kind: "anchor"; url: string };
 
@@ -42,7 +42,9 @@ export function resolveSessionLink(href: string, cwd?: string): LinkTarget | nul
   try { path = decodeURIComponent(path); } catch { /* A literal percent sign is valid in a filename. */ }
   if (/[\u0000-\u001f\u007f]/.test(path)) return null;
   // Source citations often append a line/column location; it is not part of the filename.
-  path = path.replace(/(?::\d+(?::\d+)?|#L\d+(?:C\d+)?(?:-L?\d+(?:C\d+)?)?)$/, "");
+  const location = /(?::(\d+)(?::\d+)?|#L(\d+)(?:C\d+)?(?:-L?\d+(?:C\d+)?)?)$/.exec(path);
+  const line = location ? Number(location[1] ?? location[2]) : undefined;
+  if (location) path = path.slice(0, location.index);
   const windows = /^[a-z]:[/\\]/i.test(path) || path.startsWith("\\\\") || /^[a-z]:[/\\]/i.test(cwd ?? "") || cwd?.startsWith("\\\\");
   if (windows) path = path.replace(/\\/g, "/");
   if (!path.startsWith("/") && !/^[a-z]:\//i.test(path)) {
@@ -57,7 +59,7 @@ export function resolveSessionLink(href: string, cwd?: string): LinkTarget | nul
       if (parts.length && !/^[a-z]:$/i.test(parts.at(-1)!)) parts.pop();
     } else parts.push(part);
   }
-  return { kind: "file", path: prefix + parts.join("/") };
+  return { kind: "file", path: prefix + parts.join("/"), ...(line === undefined ? {} : { line }) };
 }
 
 /** Files use the existing backend-backed viewer; URLs use the native opener on desktop. */
@@ -87,7 +89,8 @@ export function SessionLink({ href, children }: { href: string; children: ReactN
     event.preventDefault();
     setError(null);
     if (target.kind === "file") {
-      useTermStore.getState().openDocTab(target.path);
+      if (target.line === undefined) useTermStore.getState().openDocTab(target.path);
+      else useTermStore.getState().openDocTab(target.path, { line: target.line });
     } else {
       void platform.opener.openExternal(target.url).catch((err: unknown) => {
         console.warn("[links] failed to open external link", safeError(err));

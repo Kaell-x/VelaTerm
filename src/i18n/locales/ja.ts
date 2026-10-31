@@ -1494,6 +1494,7 @@ const ja: typeof en = {
   "doc.overwriteConfirm":
     "同名のファイルが既に存在します。「上書き」で置き換えます。", // A file with this name already exists. Click "Overwrite" to replace it.
   "doc.saveTooltip": "保存", // Save
+  "doc.copyReference": "参照をコピー", // Copy Reference
   "doc.externalChanged":
     "ファイルがディスク上で変更されました（未保存のローカル変更があります）。", // The file was modified on disk…
   "doc.reloadDiscard": "再読み込み（自分の変更を破棄）", // Reload (discard my changes)

@@ -27,6 +27,7 @@ export const MarkdownEditor = forwardRef<MarkdownHandle, {
   docPath: string;
   mode: MarkdownViewMode;
   onEdited(): void;
+  revealRequest?: { line: number; id: number };
   onReady?(): void;
   onRequestSearch?(): void;
   onImageError(message: string): void;
@@ -270,7 +271,7 @@ export const MarkdownEditor = forwardRef<MarkdownHandle, {
     {(mounted.source || props.mode !== "visual") && <div className="doc-markdown-pane doc-markdown-code" hidden={props.mode === "visual"}
       onFocusCapture={() => { cancelPending(); syncSource(); focused.current = "source"; }}>
       <SourceEditor ref={source} defaultValue={current()} path={props.docPath} kind="markdown"
-        onEdited={sourceEdited} onRequestSearch={props.onRequestSearch}
+        onEdited={sourceEdited} revealRequest={props.revealRequest} onRequestSearch={props.onRequestSearch}
         onImagePasteError={(_, message) => props.onImageError(message)}
         onImageClipboardUnavailable={() => props.onImageError(t("term.imgClipboardUnavailable"))} />
     </div>}

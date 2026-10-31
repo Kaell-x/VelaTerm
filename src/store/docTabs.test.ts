@@ -132,6 +132,26 @@ describe("openDocTab: creating, focusing and deduplicating", () => {
     expect(useTermStore.getState().docTabs[soleDocId()].mode).toBe("source");
   });
 
+  it("tracks source-line navigation and clears it on an ordinary reopen", () => {
+    seed();
+    useTermStore.getState().openDocTab("/tmp/a.md", { line: 12 });
+    const id = soleDocId();
+    expect(useTermStore.getState().docTabs[id]).toMatchObject({
+      mode: "source",
+      revealRequest: { line: 12, id: 1 },
+    });
+
+    useTermStore.getState().setDocTabMode(id, "visual");
+    useTermStore.getState().openDocTab("/tmp/a.md", { line: 12 });
+    expect(useTermStore.getState().docTabs[id]).toMatchObject({
+      mode: "source",
+      revealRequest: { line: 12, id: 2 },
+    });
+
+    useTermStore.getState().openDocTab("/tmp/a.md");
+    expect(useTermStore.getState().docTabs[id].revealRequest).toBeUndefined();
+  });
+
   it("reopening the same path focuses the existing tab instead of creating one", () => {
     seed();
     useTermStore.getState().openDocTab("/tmp/a.md");

@@ -1509,6 +1509,7 @@ const ru: typeof en = {
   "doc.overwriteConfirm":
     "Файл с таким именем уже существует. Нажмите «Перезаписать», чтобы заменить его.", // A file with this name already exists. Click "Overwrite" to replace it.
   "doc.saveTooltip": "Сохранить", // Save
+  "doc.copyReference": "Копировать ссылку", // Copy Reference
   "doc.externalChanged":
     "Файл изменён на диске (у вас есть несохранённые локальные изменения).", // The file was modified on disk…
   "doc.reloadDiscard": "Перезагрузить (отбросить мои изменения)", // Reload (discard my changes)

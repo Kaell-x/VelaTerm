@@ -1504,6 +1504,7 @@ const es: typeof en = {
   "doc.overwriteConfirm":
     "Ya existe un archivo con ese nombre. Pulsa «Sobrescribir» para reemplazarlo.", // A file with this name already exists. Click "Overwrite" to replace it.
   "doc.saveTooltip": "Guardar", // Save
+  "doc.copyReference": "Copiar referencia", // Copy Reference
   "doc.externalChanged":
     "El archivo fue modificado en el disco (tienes cambios locales sin guardar).", // The file was modified on disk…
   "doc.reloadDiscard": "Recargar (descartar mis cambios)", // Reload (discard my changes)

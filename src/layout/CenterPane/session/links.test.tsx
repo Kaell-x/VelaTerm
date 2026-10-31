@@ -32,15 +32,25 @@ it("resolves a relative file using its containing session's directory", () => {
   expect(openDocTab).toHaveBeenCalledWith("/work/project/docs/中文 design.md");
 });
 
+it("opens a source citation at its referenced line", () => {
+  render(<Markdown text="[实现位置](/work/app.ts:12:3)" />);
+  fireEvent.click(screen.getByRole("link"));
+  expect(openDocTab).toHaveBeenCalledWith("/work/app.ts", { line: 12 });
+});
+
 it.each([
-  ["file:///tmp/hello%20world.png", undefined, "/tmp/hello world.png"],
-  ["/work/app.ts:12:3", undefined, "/work/app.ts"],
-  ["../README.md#L12-L15", "/work/src", "/work/README.md"],
-  ["C:\\work\\中文.png", undefined, "C:/work/中文.png"],
-  ["file:///C:/work/a.png", undefined, "C:/work/a.png"],
-  ["docs/a.md", "C:\\work", "C:/work/docs/a.md"],
-])("resolves the local reference %s", (href, cwd, path) => {
-  expect(resolveSessionLink(href, cwd)).toEqual({ kind: "file", path });
+  ["file:///tmp/hello%20world.png", undefined, "/tmp/hello world.png", undefined],
+  ["/work/app.ts:12:3", undefined, "/work/app.ts", 12],
+  ["../README.md#L12-L15", "/work/src", "/work/README.md", 12],
+  ["C:\\work\\中文.png", undefined, "C:/work/中文.png", undefined],
+  ["file:///C:/work/a.png", undefined, "C:/work/a.png", undefined],
+  ["docs/a.md", "C:\\work", "C:/work/docs/a.md", undefined],
+])("resolves the local reference %s", (href, cwd, path, line) => {
+  expect(resolveSessionLink(href, cwd)).toEqual({
+    kind: "file",
+    path,
+    ...(line === undefined ? {} : { line }),
+  });
 });
 
 it("uses the platform opener for web links, including clicks on formatted labels", () => {

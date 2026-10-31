@@ -1482,6 +1482,7 @@ const ko: typeof en = {
   "doc.overwriteConfirm":
     "같은 이름의 파일이 이미 있습니다. ‘덮어쓰기’를 누르면 대체합니다.", // A file with this name already exists. Click "Overwrite" to replace it.
   "doc.saveTooltip": "저장", // Save
+  "doc.copyReference": "참조 복사", // Copy Reference
   "doc.externalChanged":
     "디스크에서 파일이 수정되었습니다 (저장하지 않은 로컬 변경이 있습니다).", // The file was modified on disk…
   "doc.reloadDiscard": "다시 불러오기 (내 변경 버리기)", // Reload (discard my changes)
