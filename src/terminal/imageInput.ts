@@ -76,14 +76,14 @@ export function planImagePaste(
     : { kind: "image-unavailable" };
 }
 
-/** Claude and Codex interactive TUIs use Ctrl+V to read image data from their host clipboard. */
+/** Claude and Codex-family interactive TUIs use Ctrl+V to read image data from their host clipboard. */
 export function supportsNativeImagePaste(kind: SessionKind): boolean {
-  return kind === "claude" || kind === "codex";
+  return kind === "claude" || kind === "codex" || kind === "traex";
 }
 
 /**
  * Trigger native agent image paste by explicitly writing Ctrl+V byte 0x16 to the PTY, allowing
- * Claude/Codex to read the system clipboard without relying on xterm's empty image-paste behavior.
+ * Claude/Codex-family agents to read the system clipboard without relying on xterm's empty image-paste behavior.
  */
 export function injectNativeImagePaste(sessionId: string): Promise<void> {
   return ptyWrite(sessionId, "\x16");
@@ -146,7 +146,7 @@ export async function injectImageFiles(
       const path = await uploadImage(bytes, extOf(file));
       // Codex converts a lone valid image path into a collapsed attachment. Prefix it in path mode so
       // the reference stays visible; Claude and other agents retain the bare path.
-      const input = kind === "codex" ? ` image_path: ${path} ` : ` ${path} `;
+      const input = kind === "codex" || kind === "traex" ? ` image_path: ${path} ` : ` ${path} `;
       await ptyWrite(sessionId, input);
       result.ok += 1;
     } catch (e) {

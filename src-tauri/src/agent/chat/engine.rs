@@ -1134,7 +1134,7 @@ impl ChatProcess {
 
     fn permission_modes(&self) -> (String, Option<PendingPermissionMode>) {
         let selected = self.mode.lock().unwrap();
-        if self.kind != SessionKind::Codex {
+        if !self.kind.is_codex_family() {
             return (selected.clone(), None);
         }
         let pending = self.codex_permission_state
@@ -1220,7 +1220,7 @@ impl ChatProcess {
 
 fn initial_mode(kind: SessionKind, stored: Option<&str>) -> String {
     match kind {
-        SessionKind::Codex => match stored.map(str::trim) {
+        SessionKind::Codex | SessionKind::Traex => match stored.map(str::trim) {
             Some("read-only") => "read-only",
             Some("full-access") | Some("skip") => "full-access",
             _ => "auto",
@@ -1548,7 +1548,7 @@ impl ChatManager {
                 if fork { return Err("Antigravity does not support conversation forks".into()); }
                 cmd.args(super::antigravity_protocol::launch_args(resume, model, effort, &mode, extra_args)?);
             }
-            SessionKind::Codex => {
+            SessionKind::Codex | SessionKind::Traex => {
                 cmd.arg("app-server").arg("--stdio");
                 cmd.args(crate::agent::codex_models::app_server_args(extra_args));
             }
@@ -1656,7 +1656,7 @@ impl ChatManager {
             permissions: Mutex::new(HashMap::new()),
             history_cut,
             history_paged:AtomicBool::new(false),
-            codex_client_ids:kind==SessionKind::Codex && codex_identity::supported(bin),
+            codex_client_ids:kind.is_codex_family() && codex_identity::supported(bin),
             codex_pending_user_ids:Mutex::new(HashMap::new()),
             commands: Mutex::new(Vec::new()),
             config_keys: Mutex::new(Vec::new()),
@@ -1682,7 +1682,7 @@ impl ChatManager {
             bypass_capable,
             codex_permission_state: Mutex::new(CodexPermissionState::default()),
             collaboration_mode: Mutex::new(match kind {
-                SessionKind::Codex => Some(
+                SessionKind::Codex | SessionKind::Traex => Some(
                     match collaboration_mode.map(str::trim) {
                         Some("plan") => "plan",
                         _ => "default",
@@ -1780,7 +1780,7 @@ impl ChatManager {
                     cwd.map(str::to_string),
                 );
             }
-            SessionKind::Codex => {
+            SessionKind::Codex | SessionKind::Traex => {
                 if let Err(message) = proc.write(&codex_protocol::initialize(&init_id)) {
                     let _ = self.stop(app, session_id);
                     return Err(message);
@@ -2170,7 +2170,7 @@ impl ChatManager {
         let claimed=proc.permissions.lock().unwrap().remove(request_id)
             .ok_or("That permission request is no longer waiting for an answer")?;
         let result=(|| -> Result<(),String> {
-            if proc.kind == SessionKind::Codex {
+            if proc.kind.is_codex_family() {
                 // The rule the card adopted, if any, travels inside `updated_permissions`; the wire module
                 // turns it into the matching native decision.
                 proc.write(&codex_protocol::permission_response(
@@ -2253,7 +2253,7 @@ impl ChatManager {
         }
         *proc.mode.lock().unwrap() = mode.to_string();
         proc.permission_confirmed.store(true, Ordering::Relaxed);
-        if proc.kind == SessionKind::Codex {
+        if proc.kind.is_codex_family() {
             return Ok(());
         }
         if proc.kind == SessionKind::Opencode {
@@ -2280,7 +2280,7 @@ impl ChatManager {
         let proc = self.sessions.lock().unwrap().get(session_id).cloned()?;
         if !proc.alive.load(Ordering::Relaxed) { return None; }
         let selected = proc.mode.lock().unwrap().clone();
-        let current = if proc.kind == SessionKind::Codex {
+        let current = if proc.kind.is_codex_family() {
             proc.codex_permission_state.lock().unwrap().applied.clone()
         } else if proc.permission_confirmed.load(Ordering::Relaxed) {
             Some(selected.clone())
@@ -2301,7 +2301,7 @@ impl ChatManager {
         mode: &str,
     ) -> Result<(), String> {
         let proc = self.get(session_id)?;
-        if !matches!(proc.kind, SessionKind::Codex | SessionKind::Opencode) {
+        if !matches!(proc.kind, SessionKind::Codex | SessionKind::Traex | SessionKind::Opencode) {
             return Err(format!(
                 "{} does not support collaboration modes",
                 proc.kind.as_str()
@@ -2434,10 +2434,10 @@ impl ChatManager {
 
     fn account_process(&self, session_id: &str) -> Result<Arc<ChatProcess>, String> {
         let proc = self.get(session_id)?;
-        if !matches!(proc.kind, SessionKind::Claude | SessionKind::Codex) {
+        if !matches!(proc.kind, SessionKind::Claude | SessionKind::Codex | SessionKind::Traex) {
             return Err("Account operations require a Claude or Codex conversation.".into());
         }
-        if proc.kind == SessionKind::Codex {
+        if proc.kind.is_codex_family() {
             for _ in 0..500 {
                 if proc.codex_initialized.load(Ordering::Relaxed) || !proc.alive.load(Ordering::Relaxed) { break; }
                 std::thread::sleep(Duration::from_millis(20));
@@ -2486,7 +2486,7 @@ impl ChatManager {
         let proc = self.get(session_id)?;
         let _action = proc.action.lock().unwrap();
         match proc.kind {
-            SessionKind::Codex => codex::compact(&proc),
+            SessionKind::Codex | SessionKind::Traex => codex::compact(&proc),
             SessionKind::Pi | SessionKind::Omp => pi::compact(&proc),
             other => Err(format!(
                 "{} does not support manual compaction",
@@ -2503,7 +2503,7 @@ impl ChatManager {
 
     fn codex(&self, session_id: &str) -> Result<Arc<ChatProcess>, String> {
         let proc = self.get(session_id)?;
-        if proc.kind != SessionKind::Codex {
+        if !proc.kind.is_codex_family() {
             return Err("This action is available only for Codex conversations".to_string());
         }
         Ok(proc)
@@ -2540,14 +2540,14 @@ impl ChatManager {
     /// The MCP servers this Claude process knows, each with its connection state and tools.
     pub fn mcp_status(&self, session_id: &str) -> Result<Value, String> {
         let proc = self.get(session_id)?;
-        if proc.kind == SessionKind::Codex { return codex::mcp_status(&proc); }
+        if proc.kind.is_codex_family() { return codex::mcp_status(&proc); }
         let proc = self.claude(session_id)?;
         proc.request_and_wait("mcp_status", |id| protocol::control_request(id, protocol::mcp_status()))
     }
 
     pub fn mcp_toggle(&self, session_id: &str, server: &str, enabled: bool) -> Result<Value, String> {
         let proc = self.get(session_id)?;
-        if proc.kind == SessionKind::Codex { return codex::mcp_toggle(&proc, server, enabled); }
+        if proc.kind.is_codex_family() { return codex::mcp_toggle(&proc, server, enabled); }
         let proc = self.claude(session_id)?;
         proc.request_and_wait("mcp_toggle", |id| {
             protocol::control_request(id, protocol::mcp_toggle(server, enabled))
@@ -2557,7 +2557,7 @@ impl ChatManager {
 
     pub fn mcp_reconnect(&self, session_id: &str, server: &str) -> Result<Value, String> {
         let proc = self.get(session_id)?;
-        if proc.kind == SessionKind::Codex { return codex::mcp_reconnect(&proc, server); }
+        if proc.kind.is_codex_family() { return codex::mcp_reconnect(&proc, server); }
         let proc = self.claude(session_id)?;
         proc.request_and_wait("mcp_reconnect", |id| {
             protocol::control_request(id, protocol::mcp_reconnect(server))
@@ -2603,7 +2603,7 @@ impl ChatManager {
     /// A live query failure must remain visible instead of launching a differently configured peer.
     pub fn live_codex_models(&self, session_id: &str) -> Option<Result<Vec<crate::agent::codex_models::CodexModel>, String>> {
         let proc = self.sessions.lock().unwrap().get(session_id).cloned()?;
-        if proc.kind != SessionKind::Codex || !proc.alive.load(Ordering::Relaxed) { return None; }
+        if !proc.kind.is_codex_family() || !proc.alive.load(Ordering::Relaxed) { return None; }
         if !proc.codex_initialized.load(Ordering::Relaxed) {
             return Some(Err("Codex is still starting. Please retry when the session is ready.".into()));
         }
@@ -2644,7 +2644,7 @@ impl ChatManager {
     pub fn context_info(&self, session_id: &str) -> Option<crate::agent::transcript::AgentContextInfo> {
         let proc = self.sessions.lock().unwrap().get(session_id).cloned()?;
         // Codex reports the same two numbers through `thread/tokenUsage/updated`, into the same fields.
-        if !matches!(proc.kind, SessionKind::Claude | SessionKind::Codex) {
+        if !matches!(proc.kind, SessionKind::Claude | SessionKind::Codex | SessionKind::Traex) {
             return None;
         }
         let extras = proc.extras.lock().unwrap().clone();
@@ -2913,7 +2913,7 @@ impl ChatManager {
     pub fn rewind_preview(&self, session_id: &str, row_id: &str) -> Result<Value, String> {
         let proc = self.get(session_id)?;
         let _action = proc.action.lock().unwrap();
-        if proc.kind == SessionKind::Codex {
+        if proc.kind.is_codex_family() {
             return Err("Codex does not expose native file restore through app-server".to_string());
         }
         if proc.kind == SessionKind::Opencode {
@@ -2941,7 +2941,7 @@ impl ChatManager {
         let mut value=match proc.kind {
             SessionKind::Claude=>proc.request_and_wait("rewind_files",|id|protocol::control_request(id,protocol::rewind_files(&selection.target.message_id,true)))?,
             SessionKind::Opencode=>json!({"canRewind":true}),
-            SessionKind::Codex=>return Err("Codex does not expose native file restore through app-server".into()),
+            SessionKind::Codex|SessionKind::Traex=>return Err("Codex does not expose native file restore through app-server".into()),
             _=>return Err("Conversation rewind is unavailable for this provider".into()),
         };
         value["historyGeneration"]=json!(selection.branch.generation);Ok(value)
@@ -2952,12 +2952,12 @@ impl ChatManager {
         let conversation=matches!(scope,"conversation"|"both") || proc.kind==SessionKind::Opencode;
         let files=matches!(scope,"files"|"both");
         if !matches!(scope,"conversation"|"files"|"both") {return Err(format!("Unknown rewind scope: {scope}"));}
-        if proc.kind==SessionKind::Codex && files {return Err("Codex does not expose native file restore through app-server".into());}
+        if proc.kind.is_codex_family() && files {return Err("Codex does not expose native file restore through app-server".into());}
         let selection=crate::agent::history_store::rewind::select(crate::agent::history_store::api::prepare(app,session)?,row,Some(generation))?;
         if proc.agent_session_id.lock().unwrap().as_deref()!=Some(selection.branch.native_id.as_str()) {return Err("source_changed: running conversation branch changed".into());}
         let prefill=if conversation {Some(selection.prefill()?)} else {None};
         let latest=if conversation && proc.kind==SessionKind::Claude {Some(selection.latest()?)} else {None};
-        let turns=if conversation && proc.kind==SessionKind::Codex {Some(selection.turn_count()?)} else {None};
+        let turns=if conversation && proc.kind.is_codex_family() {Some(selection.turn_count()?)} else {None};
         // Finish all reads and revalidate immediately before the first provider operation.
         crate::agent::history_store::rewind::select(crate::agent::history_store::api::prepare(app,session)?,row,Some(generation))?;
         let file_result=if files && proc.kind==SessionKind::Claude {
@@ -2970,7 +2970,7 @@ impl ChatManager {
                     let response=proc.request_and_wait("rewind_conversation",|id|protocol::control_request(id,protocol::rewind_conversation(&selection.target.message_id,last)))?;
                     if response["rewound"]!=true {return Err(format!("Claude refused the conversation rewind: {}",response["error"].as_str().unwrap_or("No rewind confirmation was returned")));}
                 },
-                SessionKind::Codex=>{
+                SessionKind::Codex|SessionKind::Traex=>{
                     let thread=fork_codex_for_rewind(&proc,&selection.target,&[],turns)?;activate_rewound_codex(app,session,&proc,&thread);
                 },
                 SessionKind::Opencode=>opencode::rewind(&proc,&selection.target)?,
@@ -2999,7 +2999,7 @@ impl ChatManager {
         if !conversation && !files {
             return Err(format!("Unknown rewind scope: {scope}"));
         }
-        if proc.kind == SessionKind::Codex && files {
+        if proc.kind.is_codex_family() && files {
             return Err("Codex does not expose native file restore through app-server".to_string());
         }
 
@@ -3051,7 +3051,7 @@ impl ChatManager {
                         provider_prefill = Some(text.to_string());
                     }
                 }
-                SessionKind::Codex => rewind_codex(app, session_id, &proc, &target, &drop_rows)?,
+                SessionKind::Codex | SessionKind::Traex => rewind_codex(app, session_id, &proc, &target, &drop_rows)?,
                 // One request restores both the conversation and the files; there is no separate
                 // file-only rewind, so any scope that reaches here does both.
                 SessionKind::Opencode => opencode::rewind(&proc, &target)?,
@@ -3650,7 +3650,7 @@ fn row_attachment<'a>(row: &'a ChatRow, attachment_id: &str) -> Option<&'a ChatI
 fn rewind_scopes(kind: SessionKind) -> Vec<&'static str> {
     match kind {
         SessionKind::Claude => vec!["conversation", "files", "both"],
-        SessionKind::Codex => vec!["conversation"],
+        SessionKind::Codex | SessionKind::Traex => vec!["conversation"],
         SessionKind::Opencode => vec!["both"],
         _ => Vec::new(),
     }
@@ -4094,7 +4094,7 @@ fn handle_line(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>, line: &s
         pi::handle_line(app, session_id, proc, line);
         return;
     }
-    if proc.kind == SessionKind::Codex {
+    if proc.kind.is_codex_family() {
         handle_codex_line(app, session_id, proc, line);
         return;
     }
@@ -4753,7 +4753,7 @@ fn remember_codex_thread(
     let collaboration_mode = proc.collaboration_mode.lock().unwrap().clone();
     let changed = {
         let conn = app.db().conn.lock().unwrap();
-        crate::db::repo::set_agent_session_id(&conn, session_id, thread_id, SessionKind::Codex)
+        crate::db::repo::set_agent_session_id(&conn, session_id, thread_id, proc.kind)
             .unwrap_or(false)
     };
     if changed {
@@ -5820,7 +5820,7 @@ fn report_auto_continue(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>,
             };
             auto_continue::turn_ended(app, session_id, TurnOutcome::LimitReached(Some(reset)));
         }
-        SessionKind::Codex => {
+        SessionKind::Codex | SessionKind::Traex => {
             if let Some(reset) = auto_continue::codex_reset(&auto_continue::codex_windows(&codex), false) {
                 return auto_continue::turn_ended(app, session_id, TurnOutcome::LimitReached(Some(reset)));
             }
@@ -5894,7 +5894,7 @@ fn send_interrupt_locked(proc: &Arc<ChatProcess>, turn: &mut TurnQueue) -> Resul
         }
         return pi::abort(proc);
     }
-    if proc.kind == SessionKind::Codex {
+    if proc.kind.is_codex_family() {
         if !turn.running {
             return Ok(());
         }
@@ -5986,14 +5986,14 @@ fn dispatch_steer(
     let text = normalized.as_ref();
     let row_id = message_id.map(str::to_owned).unwrap_or_else(|| format!("u-{}", proc.next_request.fetch_add(1, Ordering::Relaxed)));
     let sent_at = now_ms();
-    if proc.kind==SessionKind::Codex {
+    if proc.kind.is_codex_family() {
         if proc.agent_session_id.lock().unwrap().is_none() { return Err("Codex has not opened its thread yet".into()); }
         if proc.current_turn.lock().unwrap().is_none() { return Err("Codex is still starting its turn. Retry steering once the turn has started.".into()); }
     }
     claim_native_writer(app,proc)?;
     if let Some(id) = message_id { super::submissions::begin_dispatch(&app.db().conn.lock().unwrap(), session_id, id)?; }
     match proc.kind {
-        SessionKind::Codex => {
+        SessionKind::Codex | SessionKind::Traex => {
             let thread_id = proc.agent_session_id.lock().unwrap().clone()
                 .ok_or("Codex has not opened its thread yet")?;
             let turn_id = proc.current_turn.lock().unwrap().clone()
@@ -6085,7 +6085,7 @@ fn dispatch(
         opencode::dispatch(app, session_id, proc, &row_id, text, images)?;
     } else if matches!(proc.kind, SessionKind::Pi | SessionKind::Omp) {
         pi::dispatch(proc, text, images)?;
-    } else if proc.kind == SessionKind::Codex {
+    } else if proc.kind.is_codex_family() {
         let thread_id = proc
             .agent_session_id
             .lock()

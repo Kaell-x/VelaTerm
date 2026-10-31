@@ -707,8 +707,8 @@ pub fn codex_chat_settings(conn: &Connection, id: &str) -> Result<(Option<String
 
 /// Save one choice without resetting the other; only Codex sessions accept these settings.
 pub fn set_codex_chat_setting(conn: &Connection, id: &str, field: &str, value: Option<&str>) -> Result<(), String> {
-    if get_session_kind(conn, id)? != Some(SessionKind::Codex) {
-        return Err("These settings are available only for Codex conversations".into());
+    if !get_session_kind(conn, id)?.is_some_and(|kind| kind.is_codex_family()) {
+        return Err("These settings are available only for Codex-family conversations".into());
     }
     let sql = match field {
         "service_tier" => "INSERT INTO chat_codex_settings(session_id, service_tier) VALUES (?1, ?2) ON CONFLICT(session_id) DO UPDATE SET service_tier = excluded.service_tier",
@@ -1242,9 +1242,9 @@ pub fn fork_session(conn: &Connection, source_id: &str) -> Result<Session, Strin
 
     if !matches!(
         source.kind,
-        SessionKind::Claude | SessionKind::Codex | SessionKind::Pi | SessionKind::Omp
+        SessionKind::Claude | SessionKind::Codex | SessionKind::Traex | SessionKind::Pi | SessionKind::Omp
     ) {
-        return Err("Only claude / codex / pi / omp sessions support fork".to_string());
+        return Err("Only claude / codex / traex / pi / omp sessions support fork".to_string());
     }
     let anchor = source
         .agent_session_id

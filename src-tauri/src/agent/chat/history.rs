@@ -116,8 +116,8 @@ pub fn read(kind: SessionKind, agent_session_id: &str) -> Result<Vec<ChatEvent>,
     let events = match kind {
         SessionKind::Antigravity => super::antigravity_protocol::events(&crate::agent::antigravity::read_transcript(agent_session_id)?),
         SessionKind::Claude => claude_events(&resume::read_claude_transcript(agent_session_id)?),
-        SessionKind::Codex => {
-            let (_, content) = resume::read_codex_rollout_chain(agent_session_id)?;
+        SessionKind::Codex | SessionKind::Traex => {
+            let (_, content) = resume::read_codex_rollout_chain(kind, agent_session_id)?;
             codex_events(&content)
         }
         SessionKind::Opencode => {
@@ -160,7 +160,7 @@ pub fn rewind_targets(
 ) -> Result<Vec<RewindTarget>, String> {
     let content = match kind {
         SessionKind::Claude => resume::read_claude_transcript(agent_session_id)?,
-        SessionKind::Codex => resume::read_codex_rollout_chain(agent_session_id)?.1,
+        SessionKind::Codex | SessionKind::Traex => resume::read_codex_rollout_chain(kind, agent_session_id)?.1,
         SessionKind::Opencode => {
             let messages = crate::agent::opencode_store::messages(agent_session_id)?;
             return Ok(super::opencode_timeline::user_turns(&messages));
@@ -174,7 +174,7 @@ pub fn rewind_targets(
     };
     Ok(match kind {
         SessionKind::Claude => claude_rewind_targets(&content),
-        SessionKind::Codex => codex_rewind_targets(&content),
+        SessionKind::Codex | SessionKind::Traex => codex_rewind_targets(&content),
         _ => unreachable!(),
     })
 }
@@ -485,7 +485,7 @@ fn replay_id(index: usize) -> String {
 /// Codex's completed UserMessage id differs from its response-item id; pair those adjacent records
 /// before folding, so repeated text and merged assistant blocks never require a content lookup.
 pub fn translation_aliases(kind: SessionKind, agent_session_id: &str) -> Result<Vec<(String,String,Vec<String>,String)>,String> {
-    if !matches!(kind,SessionKind::Claude|SessionKind::Codex) {return Ok(Vec::new());}
+    if !matches!(kind,SessionKind::Claude|SessionKind::Codex|SessionKind::Traex) {return Ok(Vec::new());}
     type Aliases=Vec<(String,String,Vec<String>,String)>;
     struct Cached { path:std::path::PathBuf, size:u64, modified:std::time::SystemTime, aliases:Aliases }
     static CACHE:std::sync::OnceLock<std::sync::Mutex<HashMap<String,Cached>>>=std::sync::OnceLock::new();
@@ -501,11 +501,11 @@ pub fn translation_aliases(kind: SessionKind, agent_session_id: &str) -> Result<
     }
     let path=if kind==SessionKind::Claude {
         resume::find_claude_transcript(agent_session_id).ok_or("Claude transcript file not found")?
-    } else {resume::find_codex_rollout(agent_session_id).ok_or("Codex rollout file not found")?};
+    } else {resume::find_codex_rollout(kind, agent_session_id).ok_or("Codex-family rollout file not found")?};
     let before=std::fs::metadata(&path).ok().and_then(|m|m.modified().ok().map(|modified|(m.len(),modified)));
     let aliases=if kind==SessionKind::Claude {
         claude_translation_aliases(&resume::read_claude_transcript(agent_session_id)?)
-    } else {codex_translation_aliases(&resume::read_codex_rollout_chain(agent_session_id)?.1)};
+    } else {codex_translation_aliases(&resume::read_codex_rollout_chain(kind, agent_session_id)?.1)};
     if let Ok(meta)=std::fs::metadata(&path) {
         if let Ok(modified)=meta.modified() {
             if before!=Some((meta.len(),modified)) {return Ok(aliases);}
@@ -589,10 +589,10 @@ fn replay_recorded(kind: SessionKind, agent_session_id: &str) -> Result<Vec<Chat
         let mut read_child = claude_subagent_reader(path.with_extension("").join("subagents"),crate::agent::history_store::limits::PAGE_BYTES.saturating_sub(content.len()));
         return Ok(claude_replay(&content, &mut read_child, &mut HashSet::new(), 0));
     }
-    if kind != SessionKind::Codex {
+    if !kind.is_codex_family() {
         return Ok(to_rows(read(kind, agent_session_id)?));
     }
-    let (_, content) = resume::read_codex_rollout_chain(agent_session_id)?;
+    let (_, content) = resume::read_codex_rollout_chain(kind, agent_session_id)?;
     let events = fold(codex_events(&content))
         .into_iter()
         .filter(codex_replay_event_visible)
@@ -600,7 +600,7 @@ fn replay_recorded(kind: SessionKind, agent_session_id: &str) -> Result<Vec<Chat
     let mut remaining=crate::agent::history_store::limits::PAGE_BYTES.saturating_sub(content.len());
     let mut read_thread = |id: &str| {
         if remaining==0 {return Err(crate::agent::history_store::compat::UPGRADE.into());}
-        let (_,value)=resume::read_codex_rollout_chain(id)?;
+        let (_,value)=resume::read_codex_rollout_chain(kind,id)?;
         if value.len()>remaining {return Err(crate::agent::history_store::compat::UPGRADE.into());}
         remaining-=value.len();Ok(value)
     };

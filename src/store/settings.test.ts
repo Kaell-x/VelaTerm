@@ -80,6 +80,7 @@ describe("defaultEngineFor", () => {
   it("uses each agent's built-in default view", () => {
     expect(defaultEngineFor("claude", {})).toBe("chat");
     expect(defaultEngineFor("codex", {})).toBe("chat");
+    expect(defaultEngineFor("traex", {})).toBe("chat");
     expect(defaultEngineFor("opencode", {})).toBe("tui");
     expect(defaultEngineFor("pi", {})).toBe("tui");
     expect(defaultEngineFor("omp", {})).toBe("tui");

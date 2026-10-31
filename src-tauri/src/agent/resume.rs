@@ -34,6 +34,22 @@ pub(crate) fn codex_home() -> Option<PathBuf> {
     home_dir().map(|h| h.join(".codex"))
 }
 
+fn traex_home_from(home: Option<PathBuf>, override_root: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    override_root
+        .map(PathBuf::from)
+        .or_else(|| home.map(|home| home.join(".trae")))
+        .map(|home| home.join("cli"))
+}
+
+/// Codex-compatible history root for the requested product.
+pub(crate) fn codex_home_for(kind: SessionKind) -> Option<PathBuf> {
+    match kind {
+        SessionKind::Codex => codex_home(),
+        SessionKind::Traex => traex_home_from(home_dir(), std::env::var_os("TRAE_HOME")),
+        _ => None,
+    }
+}
+
 /// Claude root: `CLAUDE_CONFIG_DIR` when set, otherwise `~/.claude`.
 pub(crate) fn claude_home() -> Option<PathBuf> {
     if let Some(h) = std::env::var_os("CLAUDE_CONFIG_DIR") {
@@ -428,7 +444,7 @@ fn wait_for_pi_session(
 /// This compatibility path captures IDs only and **never renames from a scanned rollout**. With concurrent Codex
 /// sessions in one cwd, mtime/cwd cannot prove ownership; the old rename path could assign a neighboring title even
 /// after hooks later corrected the ID. Modern Codex reports ID and prompt with an exact VelaTerm SID and skips this scan.
-pub fn spawn_codex_capture(app: AppCtx, vlx_sid: String, cwd: Option<String>, pid: u32) {
+pub fn spawn_codex_capture(app: AppCtx, kind: SessionKind, vlx_sid: String, cwd: Option<String>, pid: u32) {
     let since = SystemTime::now();
     std::thread::spawn(move || {
         // Normal resume retains its thread ID and must not be overwritten by cwd scanning. Capture only first launch
@@ -447,10 +463,10 @@ pub fn spawn_codex_capture(app: AppCtx, vlx_sid: String, cwd: Option<String>, pi
         if !should_capture {
             return;
         }
-        let Some(home) = codex_home() else {
+        let Some(home) = codex_home_for(kind) else {
             return;
         };
-        // Without an explicit cwd, use the shell process's actual cwd where Codex launched.
+        // Without an explicit cwd, use the shell process's actual cwd where the agent launched.
         let effective_cwd = cwd.or_else(|| crate::pty::manager::process_cwd(pid));
 
         let claimed = wait_for_codex_session(
@@ -462,7 +478,7 @@ pub fn spawn_codex_capture(app: AppCtx, vlx_sid: String, cwd: Option<String>, pi
             |id| {
                 let db = app.db();
                 let did_claim = match db.conn.lock() {
-                    Ok(conn) => repo::claim_codex_session_id(&conn, &vlx_sid, id).unwrap_or(false),
+                    Ok(conn) => repo::claim_agent_session_id(&conn, &vlx_sid, id, kind).unwrap_or(false),
                     Err(_) => false,
                 };
                 did_claim
@@ -542,20 +558,22 @@ pub struct CodexCallback {
 /// after Codex has flushed the rollout.
 pub fn store_codex_callback_id(
     conn: &rusqlite::Connection,
+    kind: SessionKind,
     sid: &str,
     id: &str,
 ) -> Result<CodexCallback, String> {
-    let Some(home) = codex_home() else {
+    let Some(home) = codex_home_for(kind) else {
         return Ok(CodexCallback {
             verified: false,
             changed: false,
         });
     };
-    store_codex_callback_id_in(conn, sid, id, &home.join("sessions"))
+    store_codex_callback_id_in(conn, kind, sid, id, &home.join("sessions"))
 }
 
 fn store_codex_callback_id_in(
     conn: &rusqlite::Connection,
+    kind: SessionKind,
     sid: &str,
     id: &str,
     sessions: &Path,
@@ -581,7 +599,7 @@ fn store_codex_callback_id_in(
             changed: false,
         });
     }
-    let changed = repo::set_agent_session_id(conn, sid, id, SessionKind::Codex)?;
+    let changed = repo::set_agent_session_id(conn, sid, id, kind)?;
     Ok(CodexCallback {
         verified: true,
         changed,
@@ -601,8 +619,8 @@ fn resume_id_after_check(
     missing: bool,
 ) -> Result<Option<String>, String> {
     if missing {
-        if kind == SessionKind::Codex {
-            return Err("Cannot restore the saved Codex conversation: its history file was not found. The saved session ID has been preserved. Restore the original history or explicitly create a new session.".to_string());
+        if kind.is_codex_family() {
+            return Err(format!("Cannot restore the saved {} conversation: its history file was not found. The saved session ID has been preserved. Restore the original history or explicitly create a new session.", super::launch_options::label(kind)));
         }
         return Ok(None);
     }
@@ -626,8 +644,8 @@ pub fn confirmed_missing(kind: SessionKind, id: &str) -> bool {
             }
             !claude_transcript_exists(&projects, id)
         }
-        SessionKind::Codex => {
-            let Some(sessions) = codex_home().map(|h| h.join("sessions")) else {
+        SessionKind::Codex | SessionKind::Traex => {
+            let Some(sessions) = codex_home_for(kind).map(|h| h.join("sessions")) else {
                 return false;
             };
             if !sessions.is_dir() {
@@ -986,20 +1004,20 @@ pub(crate) fn claude_active_branch(content: &str) -> String {
         .join("\n")
 }
 
-/// Locates a Codex rollout by agent session ID under `~/.codex/sessions`.
-pub fn find_codex_rollout(id: &str) -> Option<PathBuf> {
-    let sessions = codex_home()?.join("sessions");
+/// Locates a Codex-family rollout by agent session ID under the product's own sessions root.
+pub fn find_codex_rollout(kind: SessionKind, id: &str) -> Option<PathBuf> {
+    let sessions = codex_home_for(kind)?.join("sessions");
     find_codex_rollout_in(&sessions, id)
 }
 
-/// Read the logical Codex rollout, following paginated fork ancestry.
+/// Read the logical Codex-family rollout, following paginated fork ancestry.
 ///
 /// A `thread/fork` rollout stores only its own suffix. The preceding turns remain in the parent file and
 /// are referenced by `session_meta.payload.history_base`; reading only the child therefore makes the view,
 /// export, and rewind targets lose everything before the fork after a process restart.
-pub(crate) fn read_codex_rollout_chain(id: &str) -> Result<(PathBuf, String), String> {
-    let sessions = codex_home()
-        .ok_or("Codex home directory not found")?
+pub(crate) fn read_codex_rollout_chain(kind: SessionKind, id: &str) -> Result<(PathBuf, String), String> {
+    let sessions = codex_home_for(kind)
+        .ok_or("Codex-family home directory not found")?
         .join("sessions");
     read_codex_rollout_chain_in(&sessions, id)
 }
@@ -1063,7 +1081,7 @@ mod tests {
             );
         };
         // A callback arriving before the file is flushed cannot establish an invalid anchor.
-        let store = |sid: &str, id: &str| store_codex_callback_id_in(&conn, sid, id, &root).unwrap();
+        let store = |sid: &str, id: &str| store_codex_callback_id_in(&conn, SessionKind::Codex, sid, id, &root).unwrap();
         assert!(!store(&session.id, invalid).changed);
         assert_eq!(
             repo::get_agent_session_id(&conn, &session.id).unwrap(),
@@ -1568,6 +1586,45 @@ mod tests {
         assert!(find_grok_updates_in(&grok_sessions, "../escape").is_none());
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn traex_home_honors_override_and_appends_cli() {
+        let home = Some(PathBuf::from("/home/test"));
+        assert_eq!(
+            traex_home_from(home.clone(), Some("/custom/trae".into())),
+            Some(PathBuf::from("/custom/trae/cli"))
+        );
+        assert_eq!(
+            traex_home_from(home, None),
+            Some(PathBuf::from("/home/test/.trae/cli"))
+        );
+    }
+
+    #[test]
+    fn traex_callback_preserves_kind_and_reads_its_rollout() {
+        let root = std::env::temp_dir().join(format!("vlx-traex-callback-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::db::schema::SCHEMA).unwrap();
+        let project = repo::import_project(&conn, root.to_str().unwrap()).unwrap();
+        let session = repo::create_session(
+            &conn, &project.id, None, "Traex", SessionKind::Traex, None, None, None, None, None,
+        ).unwrap();
+        let id = "01a17943-14f6-7e30-9aaf-b546cc20b908";
+        write_file(
+            &root.join(format!("rollout-test-{id}.jsonl")),
+            &format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cwd\":{}}}}}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"Restored\"}}]}}}}\n",
+                serde_json::to_string(root.to_str().unwrap()).unwrap(),
+            ),
+        );
+        let outcome = store_codex_callback_id_in(&conn, SessionKind::Traex, &session.id, id, &root).unwrap();
+        assert!(outcome.verified && outcome.changed);
+        assert_eq!(repo::get_session(&conn, &session.id).unwrap().unwrap().kind, SessionKind::Traex);
+        let (_, content) = read_codex_rollout_chain_in(&root, id).unwrap();
+        assert!(content.contains("Restored"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

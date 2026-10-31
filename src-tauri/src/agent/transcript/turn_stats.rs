@@ -907,7 +907,7 @@ pub fn current_turn_stats(kind: SessionKind, agent_session_id: &str) -> Result<T
     if matches!(kind, SessionKind::Pi | SessionKind::Omp) {
         return pi_stats_from_file(kind, agent_session_id);
     }
-    if !matches!(kind, SessionKind::Claude | SessionKind::Codex) {
+    if !matches!(kind, SessionKind::Claude | SessionKind::Codex | SessionKind::Traex) {
         return Ok(TurnStats::default());
     }
     let key = format!("{kind:?}:{agent_session_id}");
@@ -921,7 +921,7 @@ pub fn current_turn_stats(kind: SessionKind, agent_session_id: &str) -> Result<T
         entry.path = if kind == SessionKind::Claude {
             resume::find_claude_transcript(agent_session_id)
         } else {
-            resume::find_codex_rollout(agent_session_id)
+            resume::find_codex_rollout(kind, agent_session_id)
         }
         .ok_or("Agent transcript not found")?;
         entry.offset = 0;

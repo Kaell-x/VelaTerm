@@ -1022,7 +1022,7 @@ fn dispatch_inner(app: &AppCtx, cmd: &str, args: &Value, source: &str, origin: C
             }
             let idle_bounded=if prefer {
                 let kind=crate::db::repo::get_session_kind(&app.db().conn.lock().unwrap(),&sid)?;
-                matches!(kind,Some(SessionKind::Codex|SessionKind::Claude|SessionKind::Pi|SessionKind::Omp|SessionKind::Antigravity|SessionKind::Opencode|SessionKind::Kiro|SessionKind::Grok))
+                matches!(kind,Some(SessionKind::Codex|SessionKind::Traex|SessionKind::Claude|SessionKind::Pi|SessionKind::Omp|SessionKind::Antigravity|SessionKind::Opencode|SessionKind::Kiro|SessionKind::Grok))
                     && (history_only || app.chat().snapshot_window(&sid,Some(&crate::agent::chat::engine::ChatWindow {control_only:true,..Default::default()})).pid.is_none())
             } else {false};
             if args.get("protocolVersion").and_then(Value::as_u64)==Some(2) || idle_bounded {

@@ -52,7 +52,7 @@ export interface AgentDefaultConfig {
    * user enters in the card's path field. */
   path?: string;
   /** View a new session of this agent opens in. Missing uses the agent's built-in default
-   * (`defaultEngineFor`): conversation for Claude/Codex, terminal for other agents. */
+   * (`defaultEngineFor`): conversation for Claude/Codex/Traex, terminal for other agents. */
   engine?: SessionEngine;
 }
 
@@ -62,7 +62,7 @@ export function defaultEngineFor(
   kind: SessionKind,
   agentDefaults: Record<string, AgentDefaultConfig>,
 ): SessionEngine {
-  return agentDefaults[kind]?.engine ?? (kind === "claude" || kind === "codex" ? "chat" : "tui");
+  return agentDefaults[kind]?.engine ?? (kind === "claude" || kind === "codex" || kind === "traex" ? "chat" : "tui");
 }
 
 /** The permission a session launches with: its own choice, or the agent kind's global default when it has

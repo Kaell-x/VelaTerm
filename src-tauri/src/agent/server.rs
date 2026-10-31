@@ -325,6 +325,7 @@ fn serve_loop(server: tiny_http::Server, app: AppCtx, token: String) {
                             kind,
                             crate::models::SessionKind::Claude
                                 | crate::models::SessionKind::Codex
+                                | crate::models::SessionKind::Traex
                                 | crate::models::SessionKind::Opencode
                                 | crate::models::SessionKind::Copilot
                                 | crate::models::SessionKind::Cursor
@@ -338,9 +339,10 @@ fn serve_loop(server: tiny_http::Server, app: AppCtx, token: String) {
                                 | crate::models::SessionKind::Grok
                         ) =>
                     {
-                        if kind == crate::models::SessionKind::Codex {
+                        if kind.is_codex_family() {
                             match super::resume::store_codex_callback_id(
                                 &conn,
+                                kind,
                                 &sid,
                                 &agent_session_id,
                             ) {

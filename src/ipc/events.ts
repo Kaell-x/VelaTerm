@@ -83,6 +83,7 @@ export type StatusSignal =
       agent:
         | "claude"
         | "codex"
+        | "traex"
         | "opencode"
         | "copilot"
         | "cursor"

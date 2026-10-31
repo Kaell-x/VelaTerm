@@ -33,7 +33,7 @@ pub struct Prose {
     pub(super) tools:Vec<Vec<String>>,
 }
 
-pub fn supported(kind:SessionKind) -> bool {matches!(kind,SessionKind::Claude|SessionKind::Codex|SessionKind::Pi|SessionKind::Omp|SessionKind::Opencode|SessionKind::Kiro|SessionKind::Grok|SessionKind::Antigravity)}
+pub fn supported(kind:SessionKind) -> bool {matches!(kind,SessionKind::Claude|SessionKind::Codex|SessionKind::Traex|SessionKind::Pi|SessionKind::Omp|SessionKind::Opencode|SessionKind::Kiro|SessionKind::Grok|SessionKind::Antigravity)}
 
 impl Prose {
     pub fn new(branch:Branch,cancel:&AtomicBool) -> Result<Self,String> {
@@ -71,7 +71,7 @@ impl Prose {
                 (rows,visible)
             };
             let pieces=match kind {
-                SessionKind::Codex=>transcript::parse_codex_line(&raw).into_iter().collect::<Vec<_>>(),
+                SessionKind::Codex|SessionKind::Traex=>transcript::parse_codex_line(&raw).into_iter().collect::<Vec<_>>(),
                 SessionKind::Claude=>transcript::parse_claude_line(&raw).into_iter().collect::<Vec<_>>(),
                 SessionKind::Pi|SessionKind::Omp=>transcript::pi_pieces(&raw),
                 SessionKind::Grok=>transcript::grok_pieces(&record.value),
@@ -116,7 +116,7 @@ impl Prose {
                     let fragment=if long {
                         if fields.is_empty() {return Err("unsupported_record: original prose fields are unavailable".into());}
                         Fragment {source,fields,literal:None,native_user:None,trim:!matches!(kind,SessionKind::Grok|SessionKind::Antigravity),
-                            separator:if kind==SessionKind::Grok {""} else if role=="assistant" && kind!=SessionKind::Codex {"\n\n"} else {"\n"},join,proofs}
+                            separator:if kind==SessionKind::Grok {""} else if role=="assistant" && !kind.is_codex_family() {"\n\n"} else {"\n"},join,proofs}
                     } else {Fragment {source,fields,literal:Some(piece.text.clone()),native_user:None,trim:false,separator:"\n",join,proofs}};
                     let _=paths;
                     fragments.last_mut().ok_or("index_incomplete: prose fragment precedes its message")?.push(fragment);

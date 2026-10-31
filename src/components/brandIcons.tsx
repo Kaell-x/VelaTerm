@@ -267,6 +267,19 @@ export function kiroMarkEl(size = 14) {
   return <KiroMark size={size} />;
 }
 
+/** Traex mark: a compact angular T, distinct from the OpenAI rosette used by Codex. */
+function TraexMark({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="Traex">
+      <path d="M4 4h16v4h-6v12h-4V8H4V4Z" />
+    </svg>
+  );
+}
+
+export function traexMarkEl(size = 14) {
+  return <TraexMark size={size} />;
+}
+
 /**
  * Codex/OpenAI identity color shared across the application: soft gray in dark mode, periwinkle in light mode.
  */

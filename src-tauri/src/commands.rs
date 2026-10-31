@@ -205,7 +205,7 @@ pub fn pty_spawn(
         return Err("Session has been deleted".to_string());
     }
     // Codex validation runs in PtyManager after the existing-process attach path.
-    if kind != SessionKind::Codex {
+    if !kind.is_codex_family() {
         resume_id = crate::agent::resume::checked_resume_id(kind, resume_id)?;
     }
     if kind == SessionKind::Pi && resume_id.is_none() && !fork && in_db {

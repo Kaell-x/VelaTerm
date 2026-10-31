@@ -28,10 +28,10 @@ fn state(configured: String, runtime: Option<(String, Option<String>)>, chat: bo
             launch: None, activation: "nextStart", running: false };
     };
     let activation = if launch != configured { "restart" }
-        else if chat && kind == SessionKind::Codex && current.as_ref() != Some(&configured) { "nextTurn" }
+        else if chat && kind.is_codex_family() && current.as_ref() != Some(&configured) { "nextTurn" }
         else if current.is_some() { "applied" } else { "unconfirmed" };
     let pending = matches!(activation, "restart" | "nextTurn").then(|| configured.clone());
-    PermissionState { configured, current, launch: (!(chat && kind == SessionKind::Codex)).then_some(launch), pending, activation, running: true }
+    PermissionState { configured, current, launch: (!(chat && kind.is_codex_family())).then_some(launch), pending, activation, running: true }
 }
 
 pub fn read(app: &AppCtx, session_id: &str) -> Result<PermissionState, String> {

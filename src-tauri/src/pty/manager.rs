@@ -387,7 +387,7 @@ impl PtyManager {
 
         // Validate only a real launch, under its reservation. Reattaching to a live PTY
         // must remain possible even when its persisted history is temporarily unavailable.
-        let resume_id = if kind == SessionKind::Codex {
+        let resume_id = if kind.is_codex_family() {
             crate::agent::resume::checked_resume_id(kind, resume_id)?
         } else {
             resume_id
@@ -518,6 +518,7 @@ impl PtyManager {
             kind,
             SessionKind::Claude
                 | SessionKind::Codex
+                | SessionKind::Traex
                 | SessionKind::Opencode
                 | SessionKind::Copilot
                 | SessionKind::Cursor
@@ -684,8 +685,8 @@ impl PtyManager {
         };
         // Lifecycle hooks need a Codex that accepts the trust flag and a hooks table this platform can pass
         // intact; otherwise the session keeps notify plus the rollout scan.
-        let codex_hooks_supported = kind != SessionKind::Codex
-            || (codex_lifecycle_hooks_supported(bin_path.as_deref())
+        let codex_hooks_supported = !kind.is_codex_family()
+            || (codex_lifecycle_hooks_supported(kind, bin_path.as_deref())
                 && crate::agent::inject::build_codex_hooks(&exe_path).is_some());
         let opencode_v2 = kind == SessionKind::Opencode && crate::agent::opencode::is_v2(bin_path.as_deref().unwrap_or("opencode"));
         let opencode_new_terminal = opencode_v2 && resume_id.is_none();
@@ -698,7 +699,7 @@ impl PtyManager {
         }
         let should_capture_agent_id = resume_id.is_none() || fork;
         let mut terminal_thinking_off = false;
-        let extra_args = if matches!(kind, SessionKind::Claude | SessionKind::Codex | SessionKind::Opencode | SessionKind::Antigravity) {
+        let extra_args = if matches!(kind, SessionKind::Claude | SessionKind::Codex | SessionKind::Traex | SessionKind::Opencode | SessionKind::Antigravity) {
             let stored = {
                 let conn = app.db().conn.lock().unwrap();
                 crate::agent::session_settings::stored(&conn, &id)?
@@ -1452,11 +1453,11 @@ impl PtyManager {
             // Codex reports its state source immediately, before the first lifecycle event. Modern versions are
             // hook-only from this point onward; legacy versions may still report turn completion through notify,
             // but neither version uses PTY activity or screen content to invent work state.
-            SessionKind::Codex => {
+            SessionKind::Codex | SessionKind::Traex => {
                 app_extra.emit(
                     &status_event_extra,
                     StatusSignal::Agent {
-                        agent: Some("codex".to_string()),
+                        agent: Some(kind.as_str().to_string()),
                         state_source: Some(
                             if codex_hooks_supported {
                                 "hooks"
@@ -1473,6 +1474,7 @@ impl PtyManager {
                 if should_scan_codex_rollout(codex_hooks_supported) {
                     crate::agent::resume::spawn_codex_capture(
                         app_extra.clone(),
+                        kind,
                         id.clone(),
                         spawn_cwd.clone(),
                         pid,
@@ -1919,8 +1921,10 @@ fn open_recorder(app: &AppCtx, id: &str) -> Option<Recorder> {
 /// Windows once skipped this probe and injected no hooks (issue #53): the inline table's embedded double
 /// quotes did not survive npm's `codex.cmd` / `codex.ps1` wrappers. The Windows table now uses only
 /// single-quoted TOML literal strings (see `inject::codex_hooks_table`), so the probe applies everywhere.
-fn codex_lifecycle_hooks_supported(bin_path: Option<&str>) -> bool {
-    let program = bin_path.filter(|p| !p.trim().is_empty()).unwrap_or("codex");
+fn codex_lifecycle_hooks_supported(kind: SessionKind, bin_path: Option<&str>) -> bool {
+    let program = bin_path
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| crate::agent::executable::command_name(kind));
     #[cfg(windows)]
     let output = {
         let lower = program.to_ascii_lowercase();

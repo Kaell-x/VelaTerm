@@ -78,7 +78,7 @@ pub fn list(app: &AppCtx, kind: SessionKind, context: &Context) -> Result<Catalo
     ));
     let value = match kind {
         SessionKind::Claude => serde_json::to_value(super::claude_models::list_for_bin(&bin)),
-        SessionKind::Codex => {
+        SessionKind::Codex | SessionKind::Traex => {
             serde_json::to_value(super::codex_models::list_in_dir(&bin, &extra, cwd)?)
         }
         SessionKind::Opencode => {

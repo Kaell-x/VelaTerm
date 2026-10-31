@@ -14,6 +14,7 @@ import { type SessionKind } from "../types";
 export const AGENT_ARGS_KINDS: SessionKind[] = [
   "claude",
   "codex",
+  "traex",
   "opencode",
   "copilot",
   "cursor",
@@ -35,6 +36,7 @@ export function supportsAgentArgs(kind: SessionKind): boolean {
 export const RESUMABLE_KINDS: { kind: SessionKind; label: string }[] = [
   { kind: "claude", label: "Claude" },
   { kind: "codex", label: "Codex" },
+  { kind: "traex", label: "Traex" },
   { kind: "opencode", label: "OpenCode" },
   { kind: "copilot", label: "Copilot" },
   { kind: "cursor", label: "Cursor" },
@@ -61,6 +63,7 @@ export function kindLabel(kind: SessionKind): string {
   if (kind === "browser") return t("kind.browser");
   if (kind === "claude") return "Claude";
   if (kind === "codex") return "Codex";
+  if (kind === "traex") return "Traex";
   if (kind === "opencode") return "OpenCode";
   if (kind === "copilot") return "Copilot";
   if (kind === "cursor") return "Cursor";

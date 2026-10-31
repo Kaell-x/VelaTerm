@@ -54,6 +54,14 @@ pub fn install_recipe(agent: &str) -> Option<InstallRecipe> {
             docs_url: "https://developers.openai.com/codex/cli".into(),
             auth_hint: "Run `codex` and sign in with your ChatGPT account or an API key.".into(),
         },
+        "traex" => InstallRecipe {
+            label: "Traex".into(),
+            bin: "traex".into(),
+            command: String::new(),
+            needs_node: false,
+            docs_url: "https://www.trae.ai/".into(),
+            auth_hint: "Install TRAE CLI or set its `traex` path in Settings > Agents, then run `traex login`.".into(),
+        },
         "opencode" => InstallRecipe {
             label: "OpenCode".into(),
             bin: "opencode".into(),
@@ -358,6 +366,10 @@ fn agent_layout_at(agent: &str, home: &std::path::Path) -> Option<(&'static str,
             ("opencode", win)
         }
         "codex" => ("codex", true),
+        "traex" => {
+            candidates.push(home.join(".local").join("bin").join(exe_name("traex", win)));
+            ("traex", false)
+        }
         "copilot" => ("copilot", true),
         // Cline is global npm only, so infer it from the npm prefix.
         "cline" => ("cline", true),
@@ -636,7 +648,7 @@ mod tests {
             fixture_executable(&path, &script);
             kinds.push(option.id);
         }
-        assert_eq!(kinds.len(), 14);
+        assert_eq!(kinds.len(), 15);
         probes.set(0);
         let binaries = locate_installed_bins_with(layout, prefixes);
         assert_eq!(probes.get(), 1, "all npm agents share one prefix lookup");
@@ -708,7 +720,7 @@ mod tests {
         assert_eq!(prefixes, vec![prefix]);
         binaries.sort();
         expected.sort();
-        assert_eq!(binaries, expected, "all 14 commands come from .bashrc, excluding the startup banner");
+        assert_eq!(binaries, expected, "all 15 commands come from .bashrc, excluding the startup banner");
         std::fs::write(home.join(".bash_profile"), "source \"$HOME/.bashrc\"\n").unwrap();
         let (prefixes, mut binaries, _) = shell_installations(shell.to_str().unwrap());
         binaries.sort();
@@ -728,6 +740,7 @@ mod tests {
             ("grok", win),
             ("crush", !mac),
             ("codex", true),
+            ("traex", false),
             ("copilot", true),
             ("cline", true),
             ("pi", true),

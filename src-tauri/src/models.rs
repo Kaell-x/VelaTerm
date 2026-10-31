@@ -22,6 +22,8 @@ pub enum SessionKind {
     Terminal,
     Claude,
     Codex,
+    /// TRAE CLI (`traex`), using the Codex-compatible protocol and rollout format with its own storage root.
+    Traex,
     Opencode,
     Copilot,
     Cursor,
@@ -50,9 +52,15 @@ pub enum SessionKind {
 }
 
 impl SessionKind {
+    /// Whether this kind uses Codex's CLI flags, app-server protocol, and rollout records.
+    pub fn is_codex_family(self) -> bool {
+        matches!(self, Self::Codex | Self::Traex)
+    }
+
     /// Verified protocol drivers accepted by the conversation engine.
     pub fn supports_chat(self) -> bool {
-        matches!(self, Self::Claude | Self::Codex | Self::Opencode | Self::Pi | Self::Omp | Self::Antigravity)
+        matches!(self, Self::Claude | Self::Opencode | Self::Pi | Self::Omp | Self::Antigravity)
+            || self.is_codex_family()
     }
 
     /// Lowercase string used for persistence.
@@ -61,6 +69,7 @@ impl SessionKind {
             SessionKind::Terminal => "terminal",
             SessionKind::Claude => "claude",
             SessionKind::Codex => "codex",
+            SessionKind::Traex => "traex",
             SessionKind::Opencode => "opencode",
             SessionKind::Copilot => "copilot",
             SessionKind::Cursor => "cursor",
@@ -82,6 +91,7 @@ impl SessionKind {
         match s {
             "claude" => SessionKind::Claude,
             "codex" => SessionKind::Codex,
+            "traex" => SessionKind::Traex,
             "opencode" => SessionKind::Opencode,
             "copilot" => SessionKind::Copilot,
             "cursor" => SessionKind::Cursor,

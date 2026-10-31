@@ -53,6 +53,7 @@ pub fn catalog() -> Vec<LaunchOption> {
             &["low", "medium", "high", "xhigh", "max"],
         ),
         (Codex, "Codex", Some("model_reasoning_effort"), &[]),
+        (Traex, "Traex", Some("model_reasoning_effort"), &[]),
         (Opencode, "OpenCode", Some("--variant"), &[]),
         (
             Copilot,
@@ -186,7 +187,7 @@ pub fn selection(kind: SessionKind, args: Option<&str>) -> Selection {
         effort: String::new(),
     };
     for (i, word) in words.iter().enumerate() {
-        if kind == SessionKind::Codex {
+        if kind.is_codex_family() {
             if let Some(effort) = word.strip_prefix("--config=model_reasoning_effort=") {
                 result.effort = effort.trim_matches('"').into();
             }
@@ -261,11 +262,11 @@ pub fn apply(
                 i += 1;
                 continue;
             }
-            if kind == SessionKind::Codex && word.starts_with("--config=model_reasoning_effort=") {
+            if kind.is_codex_family() && word.starts_with("--config=model_reasoning_effort=") {
                 i += 1;
                 continue;
             }
-            if kind == SessionKind::Codex
+            if kind.is_codex_family()
                 && (word == "-c" || word == "--config")
                 && raw
                     .get(i + 1)
@@ -285,7 +286,7 @@ pub fn apply(
         let flag = spec
             .effort_flag
             .ok_or("This agent does not expose a reasoning effort option")?;
-        kept.push(if kind == SessionKind::Codex {
+        kept.push(if kind.is_codex_family() {
             format!("-c model_reasoning_effort={effort}")
         } else {
             format!("{flag} {effort}")
@@ -343,7 +344,10 @@ mod tests {
         let mut workflow: Vec<_> = options.iter().filter(|option| option.supports_plan_execute).map(|option| option.id.as_str()).collect();
         workflow.sort_unstable();
         assert_eq!(workflow, ["claude", "codex", "omp", "opencode", "pi"]);
-        assert_eq!(options.iter().filter(|s| s.accepts_task).count(), 14);
+        assert_eq!(options.iter().filter(|s| s.accepts_task).count(), 15);
+        let traex = options.iter().find(|s| s.id == SessionKind::Traex).unwrap();
+        assert_eq!(traex.label, "Traex");
+        assert!(traex.id.supports_chat());
         assert!(
             !options
                 .iter()

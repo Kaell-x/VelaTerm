@@ -76,6 +76,7 @@ const DEFAULT_QUICK_AGENTS: SessionKind[] = ["claude", "codex", "opencode"];
 const QUICK_AGENT_KINDS: SessionKind[] = [
   "claude",
   "codex",
+  "traex",
   "opencode",
   "copilot",
   "cursor",
@@ -411,7 +412,9 @@ export function useSessionMenu(opts?: { groupNavigation?: boolean }): SessionMen
         ? "Claude"
         : kind === "codex"
           ? "Codex"
-          : kind === "opencode"
+          : kind === "traex"
+            ? "Traex"
+            : kind === "opencode"
             ? "OpenCode"
             : kind === "copilot"
               ? "Copilot"
@@ -685,6 +688,11 @@ export function useSessionMenu(opts?: { groupNavigation?: boolean }): SessionMen
           label: t("tree.newAgentSession", "Codex"),
           icon: kindIconEl("codex"),
           onClick: () => void handleNewSession(projectId, groupId, "codex", parentSessionId),
+        },
+        {
+          label: t("tree.newAgentSession", "Traex"),
+          icon: kindIconEl("traex"),
+          onClick: () => void handleNewSession(projectId, groupId, "traex", parentSessionId),
         },
         {
           label: t("tree.newAgentSession", "OpenCode"),
@@ -988,10 +996,11 @@ export function useSessionMenu(opts?: { groupNavigation?: boolean }): SessionMen
       items.push(buildMarkItem("session", node.id), sep, buildMoveTo(), sep, remove);
       return items;
     }
-    // Fork is available only to Claude/Codex/Pi/OMP with a captured conversation ID and native fork support.
+    // Fork is available only to Claude/Codex/Traex/Pi/OMP with a captured conversation ID and native fork support.
     const canFork =
       (sessionRec?.kind === "claude" ||
         sessionRec?.kind === "codex" ||
+        sessionRec?.kind === "traex" ||
         sessionRec?.kind === "pi" ||
         sessionRec?.kind === "omp") &&
       !!sessionRec?.agentSessionId;
@@ -1015,7 +1024,7 @@ export function useSessionMenu(opts?: { groupNavigation?: boolean }): SessionMen
       ...(canFork
         ? [{ label: t("tree.forkSession"), onClick: () => void forkSession(node.id) }]
         : []),
-      // Export context for local Claude/Codex sessions with captured parseable conversation IDs.
+      // Export context for local Claude/Codex/Traex sessions with captured parseable conversation IDs.
       ...(sessionRec && canExportContext(sessionRec)
         ? [{ label: t("tree.exportSession"), onClick: () => void exportSessionToFile(sessionRec) }]
         : []),

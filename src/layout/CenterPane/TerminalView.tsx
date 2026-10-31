@@ -487,7 +487,9 @@ export const TerminalView = memo(function TerminalView({
                 "term.starting",
                 session.kind === "codex"
                   ? "Codex"
-                  : session.kind === "opencode"
+                  : session.kind === "traex"
+                    ? "Traex"
+                    : session.kind === "opencode"
                     ? "OpenCode"
                     : session.kind === "copilot"
                       ? "Copilot"

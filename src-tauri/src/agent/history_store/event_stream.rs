@@ -221,7 +221,7 @@ impl Cursor {
                 }continue;
             }
             let events=match self.branch.kind {
-                SessionKind::Codex=>export::codex_events(&raw),SessionKind::Claude=>export::claude_events(&raw),
+                SessionKind::Codex|SessionKind::Traex=>export::codex_events(&raw),SessionKind::Claude=>export::claude_events(&raw),
                 SessionKind::Pi|SessionKind::Omp=>export::pi_events(&raw),
                 SessionKind::Kiro=>if record.value["type"]=="kiro_message" {
                     let text=record.value["text"].as_str().unwrap_or_default().into();let ts=record.value["timestamp"].as_str().map(str::to_owned);
@@ -250,7 +250,7 @@ impl Cursor {
                 let long=record.fields.iter().any(|field|roots.contains(&field.path) && field.truncated);
                 let fields=roots.iter().filter_map(|path|refs.get(path.as_str()).map(|meta|(*meta).clone())).collect::<Vec<_>>();
                 let mut body=Text {pieces:fields.iter().map(|meta|Piece::Field(source.clone(),meta.clone())).collect(),quote_json:quote,
-                    separator:if self.branch.kind==SessionKind::Codex && role=="reasoning" {"\n\n"} else {"\n"}};
+                    separator:if self.branch.kind.is_codex_family() && role=="reasoning" {"\n\n"} else {"\n"}};
                 if record.value["type"]=="kiro_message" {body.separator="";}
                 if body.pieces.is_empty() {body=Text::literal(fallback.clone());}
                 else if !long {body=Text {pieces:vec![Piece::VerifiedLiteral(source.clone(),fields,fallback.clone())],quote_json:false,separator:"\n"};}

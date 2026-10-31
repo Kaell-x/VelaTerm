@@ -241,6 +241,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         conn.execute("ALTER TABLE sessions ADD COLUMN agent_path TEXT", [])
             .map_err(|e| format!("Failed to migrate sessions.agent_path: {e}"))?;
     }
+    migrate_traex_kinds(conn)?;
     if table_exists(conn, "projects") && !column_exists(conn, "projects", "collection_id") {
         conn.execute("ALTER TABLE projects ADD COLUMN collection_id TEXT REFERENCES projects(id) ON DELETE SET NULL", [])
             .map_err(|e| format!("Failed to migrate projects.collection_id: {e}"))?;
@@ -300,6 +301,58 @@ fn migrate_project_folders(conn: &Connection) -> Result<(), String> {
     }
     tx.execute("DROP TABLE project_folders", []).map_err(|e| format!("Failed to remove legacy folders: {e}"))?;
     tx.commit().map_err(|e| format!("Failed to commit collection migration: {e}"))
+}
+
+fn is_traex_executable(path: &str) -> bool {
+    let name = path
+        .trim()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "traex" | "traecli" | "traex.exe" | "traecli.exe" | "traex.cmd" | "traecli.cmd"
+            | "traex.bat" | "traecli.bat" | "traex.ps1" | "traecli.ps1"
+    )
+}
+
+/// Reclassify only legacy Codex rows whose own executable is unambiguously TRAE CLI.
+fn migrate_traex_kinds(conn: &Connection) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| format!("Failed to begin Traex migration: {e}"))?;
+    let sessions = {
+        let mut stmt = tx.prepare("SELECT id, agent_path FROM sessions WHERE kind = 'codex' AND agent_path IS NOT NULL")
+            .map_err(|e| format!("Failed to read legacy Traex sessions: {e}"))?;
+        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|e| format!("Failed to scan legacy Traex sessions: {e}"))?;
+        let rows = rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        rows.into_iter()
+            .filter(|(_, path)| is_traex_executable(path))
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>()
+    };
+    for id in sessions {
+        tx.execute("UPDATE sessions SET kind = 'traex' WHERE id = ?1 AND kind = 'codex'", [id])
+            .map_err(|e| format!("Failed to migrate Traex session: {e}"))?;
+    }
+    if table_exists(&tx, "agent_presets") {
+        let presets = {
+            let mut stmt = tx.prepare("SELECT id, exec_path FROM agent_presets WHERE base_kind = 'codex' AND exec_path IS NOT NULL")
+                .map_err(|e| format!("Failed to read legacy Traex presets: {e}"))?;
+            let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .map_err(|e| format!("Failed to scan legacy Traex presets: {e}"))?;
+            let rows = rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+            rows.into_iter()
+                .filter(|(_, path)| is_traex_executable(path))
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        };
+        for id in presets {
+            tx.execute("UPDATE agent_presets SET base_kind = 'traex' WHERE id = ?1 AND base_kind = 'codex'", [id])
+                .map_err(|e| format!("Failed to migrate Traex preset: {e}"))?;
+        }
+    }
+    tx.commit().map_err(|e| format!("Failed to commit Traex migration: {e}"))
 }
 
 /// Whether a table already has a column, based on PRAGMA table_info.
@@ -421,6 +474,44 @@ mod tests {
         assert_ne!(parent, "collision");
         assert_eq!(project(parent).name, "Notes");
         assert_eq!(tree.projects.len(), 7);
+    }
+
+    #[test]
+    fn migrate_reclassifies_only_explicit_traex_sessions_and_presets() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(schema::SCHEMA).unwrap();
+        let project = repo::create_virtual_project(&conn, "Traex migration").unwrap();
+        for (id, path) in [
+            ("traex", "/opt/traex"),
+            ("traecli", r"C:\tools\traecli.CMD"),
+            ("codex", "/opt/codex"),
+            ("custom", "/opt/codex-custom"),
+        ] {
+            conn.execute(
+                "INSERT INTO sessions(id,project_id,name,kind,agent_path,agent_args,agent_session_id,engine,created_at)
+                 VALUES (?1,?2,?1,'codex',?3,'--model kept','native-kept','chat',0)",
+                rusqlite::params![id, project.id, path],
+            ).unwrap();
+        }
+        let traex_preset = repo::create_agent_preset(&conn, "Traex", crate::models::SessionKind::Codex,
+            Some("/opt/traex"), Some("--model kept"), Some("auto"), None).unwrap();
+        let codex_preset = repo::create_agent_preset(&conn, "Codex", crate::models::SessionKind::Codex,
+            Some("/opt/codex"), None, None, None).unwrap();
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        for id in ["traex", "traecli"] {
+            let session = repo::get_session(&conn, id).unwrap().unwrap();
+            assert_eq!(session.kind, crate::models::SessionKind::Traex);
+            assert_eq!(session.agent_args.as_deref(), Some("--model kept"));
+            assert_eq!(session.agent_session_id.as_deref(), Some("native-kept"));
+            assert_eq!(session.engine, "chat");
+        }
+        for id in ["codex", "custom"] {
+            assert_eq!(repo::get_session(&conn, id).unwrap().unwrap().kind, crate::models::SessionKind::Codex);
+        }
+        let presets = repo::list_agent_presets(&conn).unwrap();
+        assert_eq!(presets.iter().find(|p| p.id == traex_preset.id).unwrap().base_kind, crate::models::SessionKind::Traex);
+        assert_eq!(presets.iter().find(|p| p.id == codex_preset.id).unwrap().base_kind, crate::models::SessionKind::Codex);
     }
 
     /// The database file is owner-only after open: app_settings holds the remote-access password

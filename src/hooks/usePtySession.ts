@@ -76,7 +76,7 @@ import { installImeCaret } from "../terminal/imeCaret";
 import { detectAgentScreen, readScreenTail } from "../terminal/screenDetect";
 import { remapGrokDayCanvasToWhite } from "../terminal/grokBgRemap";
 import { fontStack, resolveTheme, xtermTheme } from "../theme";
-import type { AgentKind, Session } from "../types";
+import { isCodexFamilyKind, type AgentKind, type Session } from "../types";
 
 /** Size mode: fit owns the PTY grid; mirror pins the grid and observes it. */
 export type SizeMode = "fit" | "mirror";
@@ -574,7 +574,9 @@ export function usePtySession(session: Session, cwd?: string, hidden?: boolean) 
         ? "claude"
         : session.kind === "codex"
           ? "codex"
-          : session.kind === "opencode"
+          : session.kind === "traex"
+            ? "traex"
+            : session.kind === "opencode"
             ? "opencode"
             : session.kind === "copilot"
               ? "copilot"
@@ -599,9 +601,9 @@ export function usePtySession(session: Session, cwd?: string, hidden?: boolean) 
                           : session.kind === "zoo"
                             ? "zoo"
                         : null;
-    // Codex deliberately has no screen detector. Official lifecycle hooks (and legacy turn-complete notify)
-    // are its only activity sources; an absent event is displayed as unavailable/running rather than guessed.
-    const screenDetectKind = agentKind === "codex" ? null : agentKind;
+    // Codex-family agents deliberately have no screen detector. Official lifecycle hooks (and legacy
+    // turn-complete notify) are their only activity sources; absent events stay unavailable/running.
+    const screenDetectKind = agentKind && isCodexFamilyKind(agentKind) ? null : agentKind;
     let detectTimer: ReturnType<typeof setTimeout> | undefined;
     let recheckTimer: ReturnType<typeof setTimeout> | undefined;
     let lastTail = "";
@@ -895,7 +897,7 @@ export function usePtySession(session: Session, cwd?: string, hidden?: boolean) 
       const cur = agentKind
         ? useTermStore.getState().runtimes[session.id]?.agentState
         : undefined;
-      if (agentKind === "codex" && data === "\x1b" && cur === "working") {
+      if (agentKind && isCodexFamilyKind(agentKind) && data === "\x1b" && cur === "working") {
         // Return immediately to bottom, then correct parsed batches for up to five seconds.
         followBottomUntil = performance.now() + 5000;
         term.scrollToBottom();
@@ -907,7 +909,7 @@ export function usePtySession(session: Session, cwd?: string, hidden?: boolean) 
       // hook-only: its Stop lifecycle event owns this transition, and missing events must remain visible.
       // Report it rather than applying it: an interrupt typed here ends the turn for the session, not just
       // for this window, and the other client used to keep showing the turn as still running.
-      if (agentKind && agentKind !== "codex" && isInterrupt && cur === "working") {
+      if (agentKind && !isCodexFamilyKind(agentKind) && isInterrupt && cur === "working") {
         void reportInterrupt(session.id).catch(() => {});
       }
     });
