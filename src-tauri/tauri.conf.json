@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "VelaTerm",
   "version": "0.2.14",
-  "identifier": "io.vlinx.vlxterm",
+  "identifier": "io.vlinx.vlxterm.release",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
