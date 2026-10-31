@@ -543,7 +543,7 @@ pub fn close_master(host: &str, session: &str) {
         cmd.args(ssh_common_args(&sock, port, true));
         cmd.args(["-O", "exit"]);
         cmd.arg(target);
-        let _ = cmd.output();
+        let _ = run_capture(cmd, "close SSH control connection", None);
         let _ = std::fs::remove_file(&sock);
     }
 }
@@ -569,30 +569,75 @@ fn remote_command(host: &str, session: &str, remote_cmd: &str) -> Command {
     cmd
 }
 
+const SSH_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Run a command and capture stdout; include stderr on nonzero exit. `input`, when given, is written to
 /// the command's stdin from a separate thread so a large reply cannot deadlock against the write.
-fn run_capture(mut cmd: Command, what: &str, input: Option<&str>) -> Result<String, String> {
-    let out = match input {
-        None => cmd.output(),
-        Some(input) => {
-            use std::io::Write;
-            cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-            cmd.spawn().and_then(|mut child| {
-                let mut stdin = child.stdin.take().expect("stdin was piped");
-                let input = input.to_owned();
-                let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
-                let out = child.wait_with_output();
-                let _ = writer.join();
-                out
-            })
+fn run_capture(cmd: Command, what: &str, input: Option<&str>) -> Result<String, String> {
+    run_capture_timeout(cmd, what, input, SSH_COMMAND_TIMEOUT)
+}
+
+fn run_capture_timeout(mut cmd: Command, what: &str, input: Option<&str>, timeout: Duration) -> Result<String, String> {
+    use std::io::Read;
+
+    cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("{what} failed to run (ssh missing locally?): {e}"))?;
+    let mut stdout = child.stdout.take().ok_or("failed to capture command stdout")?;
+    let mut stderr = child.stderr.take().ok_or("failed to capture command stderr")?;
+    let out_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf);
+        buf
+    });
+    let writer = input.map(|input| {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().expect("stdin was piped");
+        let input = input.to_owned();
+        std::thread::spawn(move || stdin.write_all(input.as_bytes()))
+    });
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() >= timeout => {
+                #[cfg(unix)]
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                if let Some(writer) = writer { let _ = writer.join(); }
+                let _ = out_reader.join();
+                let _ = err_reader.join();
+                return Err(format!("{what} timed out after {} seconds", timeout.as_secs()));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{what} failed while waiting: {e}"));
+            }
         }
+    };
+    if let Some(writer) = writer { let _ = writer.join(); }
+    let out = out_reader.join().unwrap_or_default();
+    let err = err_reader.join().unwrap_or_default();
+    if !status.success() {
+        return Err(format!("{what} failed: {}", String::from_utf8_lossy(&err).trim()));
     }
-    .map_err(|e| format!("{what} failed to run (ssh missing locally?): {e}"))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("{what} failed: {}", err.trim()));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    Ok(String::from_utf8_lossy(&out).trim().to_string())
 }
 
 // ─────────────────────────── Remote system detection ───────────────────────────
@@ -2598,6 +2643,26 @@ mod tests {
         assert!(win.contains("Stop-Process -Id $o.pid"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn run_capture_timeout_kills_stalled_command() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "sleep 30"]);
+        let started = Instant::now();
+        let error = run_capture_timeout(cmd, "stalled SSH test", None, Duration::from_millis(100)).unwrap_err();
+        assert!(error.contains("timed out"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_capture_preserves_stdout_and_stdin() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "read value; printf 'out:%s' \"$value\""]);
+        let out = run_capture(cmd, "SSH input test", Some("hello\n")).unwrap();
+        assert_eq!(out, "out:hello");
+    }
+
     /// Ignored real-host end-to-end test: connect, detect, provision, SCP, serve, forward, and verify the
     /// port. Requires VLX_TEST_SSH_HOST and a local Linux VLX_DEV_SERVER_BIN.
     #[test]
@@ -2643,6 +2708,36 @@ mod tests {
             login_status, 200,
             "/api/login with the random password should return 200, logging into the backend automatically"
         );
+    }
+
+    /// Ignored real-host tunnel recovery: drop only forwarding, rebuild it on the stable port, then clean up.
+    #[test]
+    #[ignore = "requires VLX_TEST_SSH_HOST; run with cargo test -- --ignored"]
+    fn integration_rebuild_tunnel() {
+        let host = match std::env::var("VLX_TEST_SSH_HOST") {
+            Ok(h) if !h.is_empty() => h,
+            _ => return,
+        };
+        let tmp = std::env::temp_dir().join("vlx-ssh-it");
+        let _ = std::fs::create_dir_all(&tmp);
+        let r = connect(&tmp, &host, SshAuth::Auto, false, false, &|_: &str, _: Option<u8>| {})
+            .expect("connect should succeed");
+        stop_serve(&r.session);
+        rebuild_tunnel(&host, &r.session, "vlx-ssh-it", r.local_port).unwrap_or_else(|e| {
+            let message = match e {
+                RebuildErr::Retryable(message) | RebuildErr::Fatal(message) => message,
+            };
+            panic!("the tunnel should rebuild on the same local port: {message}");
+        });
+        let status = ureq::get(&format!("http://127.0.0.1:{}", r.local_port))
+            .timeout(Duration::from_secs(8))
+            .call()
+            .map(|resp| resp.status())
+            .unwrap_or(0);
+        assert_eq!(status, 200);
+        kill_remote_service(&host, &r.session);
+        stop_serve(&r.session);
+        close_master(&host, &r.session);
     }
 
     /// Ignored real-host lifecycle: initial start, disconnect while preserving, reconnect/reuse with the
