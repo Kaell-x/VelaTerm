@@ -1460,6 +1460,7 @@ const zhCN: typeof en = {
   "doc.saving": "保存中…",
   "doc.overwriteConfirm": "已存在同名文件，点「覆盖」替换原文件。",
   "doc.saveTooltip": "保存",
+  "doc.copyReference": "复制引用",
   "doc.externalChanged": "文件已在磁盘上被修改（你有未保存的本地修改）。",
   "doc.reloadDiscard": "重新加载（丢弃我的修改）",
   "doc.externalChangedClean": "文件已在磁盘上被修改。",

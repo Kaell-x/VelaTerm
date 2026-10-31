@@ -1499,6 +1499,7 @@ const en = {
   "doc.overwriteConfirm":
     "A file with this name already exists. Click “Overwrite” to replace it.",
   "doc.saveTooltip": "Save",
+  "doc.copyReference": "Copy Reference",
   "doc.externalChanged":
     "The file was modified on disk (you have unsaved local changes).",
   "doc.reloadDiscard": "Reload (discard my changes)",

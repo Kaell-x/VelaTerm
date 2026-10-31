@@ -24,7 +24,7 @@ import { SearchCursor } from "@codemirror/search";
 import { vlxHighlight } from "./docHighlight";
 import { EMPTY_STATUS, type DocSearchControl, type SearchStatus } from "./docSearch";
 import { uploadDocImage } from "../../../ipc/transport";
-import { env } from "../../../platform";
+import { env, platform } from "../../../platform";
 import {
   extOf,
   imageFromNativeClipboard,
@@ -42,6 +42,10 @@ export interface SourceHandle {
   insertText: (value: string) => void;
   /** Scroll to a zero-based line and place the cursor at its start, clamping to the final line. */
   scrollToLine: (line: number) => void;
+  /** Center a one-based line and place the cursor at its start, clamping to the document bounds. */
+  revealLine: (line: number) => void;
+  /** Copy the absolute path and current one-based line as a source reference. */
+  copyReference: () => void;
   /** Unified find/replace controls shared with WYSIWYG mode. */
   search: DocSearchControl;
   /** Reading position: the caret line when on screen, otherwise the top line, as a fractional line. */
@@ -164,6 +168,17 @@ const cmTheme = EditorView.theme({
   ".cm-searchMatch-selected": { backgroundColor: "var(--accent-line)" },
 });
 
+function revealEditorLine(view: EditorView, line: number) {
+  const requested = Number.isFinite(line) ? Math.trunc(line) : 1;
+  const n = Math.max(1, Math.min(requested, view.state.doc.lines));
+  const pos = view.state.doc.line(n).from;
+  view.dispatch({
+    selection: { anchor: pos },
+    effects: EditorView.scrollIntoView(pos, { y: "center" }),
+  });
+  view.focus();
+}
+
 export const SourceEditor = forwardRef<
   SourceHandle,
   {
@@ -174,6 +189,8 @@ export const SourceEditor = forwardRef<
     kind: "markdown" | "code";
     /** Called after genuine user edits so DocView can mark dirty and decide persistence. */
     onEdited: () => void;
+    /** A one-based source line and a unique request ID, supplied by file-link navigation. */
+    revealRequest?: { line: number; id: number };
     /** Cmd+F request for DocView's unified search, replacing CodeMirror's panel. */
     onRequestSearch?: () => void;
     /** Read-only mode for truncated files over 10 MB; selection, copy, and search remain enabled. */
@@ -188,6 +205,7 @@ export const SourceEditor = forwardRef<
   path,
   kind,
   onEdited,
+  revealRequest,
   onRequestSearch,
   readOnly,
   onImagePasteError,
@@ -213,6 +231,14 @@ export const SourceEditor = forwardRef<
   }>({ query: "", caseSensitive: false, matches: [], current: -1 });
   const focusCompartment = useRef(new Compartment()).current;
   const typewriterCompartment = useRef(new Compartment()).current;
+
+  const copyReference = () => {
+    const view = viewRef.current;
+    if (!view || !path) return false;
+    const line = view.state.doc.lineAt(view.state.selection.main.head).number;
+    void platform.clipboard.writeText(`${path}:${line}`, { reportFailure: true }).catch(() => {});
+    return true;
+  };
 
   useEffect(() => {
     const root = rootRef.current;
@@ -261,7 +287,7 @@ export const SourceEditor = forwardRef<
       parent: root,
       doc: defaultValue,
       extensions: [
-        // Intercept Cmd+F before basicSetup's searchKeymap and delegate to unified search.
+        // Intercept editor commands before basicSetup's keymaps.
         Prec.highest(
           keymap.of([
             {
@@ -271,6 +297,7 @@ export const SourceEditor = forwardRef<
                 return true;
               },
             },
+            { key: "Mod-Shift-Alt-c", run: copyReference },
           ]),
         ),
         basicSetup,
@@ -418,6 +445,11 @@ export const SourceEditor = forwardRef<
         effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 12 }),
       });
     },
+    revealLine: (line) => {
+      const view = viewRef.current;
+      if (view) revealEditorLine(view, line);
+    },
+    copyReference: () => { copyReference(); },
     readingPosition: () => {
       const view = viewRef.current;
       if (!view) return null;
@@ -497,6 +529,11 @@ export const SourceEditor = forwardRef<
       },
     },
   }));
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view && revealRequest) revealEditorLine(view, revealRequest.line);
+  }, [revealRequest]);
 
   return <div className="docview-source" ref={rootRef} />;
 });

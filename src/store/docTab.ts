@@ -35,6 +35,8 @@ export interface DocTab {
   dirty: boolean;
   /** Pending close confirmation set for dirty tabs so DocView renders the three-way prompt. */
   pendingClose: boolean;
+  /** One-based source line requested by a file link. The ID distinguishes repeated requests for the same line. */
+  revealRequest?: { line: number; id: number };
   /**
    * Refresh generation. Incrementing asks DocView to reread disk after deduplicated `view` focus or
    * the tab refresh action. Unsaved changes trigger the external-change banner instead of being lost.

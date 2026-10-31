@@ -1461,6 +1461,7 @@ const zhTW: typeof en = {
   "doc.saving": "儲存中…", // Saving…
   "doc.overwriteConfirm": "已存在同名檔案，點「覆蓋」替換原檔案。", // A file with this name already exists. Click "Overwrite" to replace it.
   "doc.saveTooltip": "儲存", // Save
+  "doc.copyReference": "複製引用", // Copy Reference
   "doc.externalChanged": "檔案已在磁碟上被修改（你有未儲存的本地修改）。", // The file was modified on disk…
   "doc.reloadDiscard": "重新載入（捨棄我的修改）", // Reload (discard my changes)
   "doc.externalChangedClean": "檔案已在磁碟上被修改。", // The file was modified on disk.

@@ -1306,7 +1306,7 @@ interface TermStore {
   /**
    * Opens a document tab. Reopening an existing path focuses it and forces a disk reload; otherwise creates one.
    */
-  openDocTab: (path: string) => void;
+  openDocTab: (path: string, opts?: { line?: number }) => void;
   /** Creates an untitled plain-text draft whose first Save As establishes path and syntax. */
   newDocTab: () => void;
   /**
@@ -3028,18 +3028,23 @@ export const useTermStore = create<TermStore>((set, get) => ({
   },
 
   // ── Document tabs opened by the built-in `view` editor ──
-  openDocTab: (path) => {
+  openDocTab: (path, opts) => {
     set((state) => {
       // Focus and reload an already-open canonical path because another `view` request asks for current content.
       const existing = Object.values(state.docTabs).find(
         (d) => d.path === path,
       );
+      const line = opts?.line;
       if (existing) {
         return {
           docTabs: {
             ...state.docTabs,
             [existing.id]: {
               ...existing,
+              mode: line === undefined ? existing.mode : "source",
+              revealRequest: line === undefined
+                ? undefined
+                : { line, id: (existing.revealRequest?.id ?? 0) + 1 },
               reloadNonce: existing.reloadNonce + 1,
             },
           },
@@ -3049,6 +3054,10 @@ export const useTermStore = create<TermStore>((set, get) => ({
         };
       }
       const tab = makeDocTab(path);
+      if (line !== undefined) {
+        tab.mode = "source";
+        tab.revealRequest = { line, id: 1 };
+      }
       return {
         docTabs: { ...state.docTabs, [tab.id]: tab },
         openTabs: [...state.openTabs, tab.id],

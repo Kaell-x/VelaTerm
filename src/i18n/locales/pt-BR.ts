@@ -1502,6 +1502,7 @@ const ptBR: typeof en = {
   "doc.overwriteConfirm":
     "Já existe um arquivo com esse nome. Clique em “Substituir” para substituí-lo.", // A file with this name already exists. Click "Overwrite" to replace it.
   "doc.saveTooltip": "Salvar", // Save
+  "doc.copyReference": "Copiar referência", // Copy Reference
   "doc.externalChanged":
     "O arquivo foi modificado no disco (você tem alterações locais não salvas).", // The file was modified on disk…
   "doc.reloadDiscard": "Recarregar (descartar minhas alterações)", // Reload (discard my changes)

@@ -12,7 +12,7 @@ import { readTextFile, statFile, writeTextFile } from "../../../ipc/info";
 import { isTauri } from "../../../ipc/transport";
 import { env, platform } from "../../../platform";
 import { DOC_EXPORT_PDF_EVENT, DOC_SAVE_EVENT } from "../../../hooks/useKeyboardShortcuts";
-import { labelWithCombo } from "../../../hooks/shortcutRegistry";
+import { formatCombo, labelWithCombo } from "../../../hooks/shortcutRegistry";
 import { useTermStore, type DocTab } from "../../../store/termStore";
 import Icons from "../../../components/Icons";
 import { ContextMenu, type MenuItem } from "../../../components/ContextMenu";
@@ -584,6 +584,12 @@ function TextDocView({ tab, hidden, artifact }: { tab: DocTab; hidden: boolean; 
           });
       },
     },
+    {
+      label: t("doc.copyReference"),
+      disabled: !tab.path,
+      shortcut: formatCombo("mod+shift+alt+c"),
+      onClick: () => sourceRef.current?.copyReference(),
+    },
     { label: "", separator: true },
     {
       label: t("common.selectAll"),
@@ -628,6 +634,7 @@ function TextDocView({ tab, hidden, artifact }: { tab: DocTab; hidden: boolean; 
               mode={tab.mode as MarkdownViewMode}
               modes={writingModes}
               onEdited={onEdited}
+              revealRequest={tab.revealRequest}
               onReady={() => setEditorReadyEpoch(n => n + 1)}
               onImageError={showImagePasteError}
               onRequestSearch={() => setSearchOpen(true)}
@@ -640,6 +647,7 @@ function TextDocView({ tab, hidden, artifact }: { tab: DocTab; hidden: boolean; 
               path={tab.path}
               kind={tab.kind === "markdown" ? "markdown" : "code"}
               onEdited={onEdited}
+              revealRequest={tab.revealRequest}
               onRequestSearch={() => setSearchOpen(true)}
               readOnly={readonlyTrunc}
               onImagePasteError={(failed, lastError) =>
