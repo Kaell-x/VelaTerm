@@ -563,8 +563,55 @@ fn pretty_json(v: &Value) -> String {
 
 // ─────────────────────────── Codex parsing ───────────────────────────
 
+/// Expand mutation-based rollout records into classic `response_item` lines.
+///
+/// Recent Traex (and newer Codex) rollouts no longer store one `response_item` per line: the item
+/// list travels as `history_mutation` appends, so a parser that only reads `response_item` sees a
+/// nearly empty conversation. Only `append` operations are expanded; anything else passes through
+/// unchanged, and content without mutations is returned untouched.
+pub(crate) fn expand_codex_rollout_mutations(content: &str) -> std::borrow::Cow<'_, str> {
+    if !content.contains("\"history_mutation\"") {
+        return std::borrow::Cow::Borrowed(content);
+    }
+    let mut out = String::with_capacity(content.len());
+    for line in content.lines() {
+        if !line.contains("\"history_mutation\"") {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let is_append = value.get("type").and_then(Value::as_str) == Some("history_mutation")
+            && value.pointer("/payload/operation").and_then(Value::as_str) == Some("append");
+        if !is_append {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        let ts = value.get("timestamp").and_then(Value::as_str).map(str::to_string);
+        if let Some(items) = value.pointer("/payload/items").and_then(Value::as_array) {
+            for item in items {
+                let mut record = serde_json::json!({"type": "response_item", "payload": item});
+                if let Some(ts) = &ts {
+                    record["timestamp"] = Value::String(ts.clone());
+                }
+                if let Ok(serialized) = serde_json::to_string(&record) {
+                    out.push_str(&serialized);
+                    out.push('\n');
+                }
+            }
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// Parse a complete Codex rollout into events, skipping injected environment and instruction blocks.
 pub(crate) fn codex_events(content: &str) -> Vec<Event> {
+    let content = expand_codex_rollout_mutations(content);
     // Map call IDs to tool names for function_call_output display.
     let mut call_names: HashMap<String, String> = HashMap::new();
     let mut out: Vec<Event> = Vec::new();
@@ -859,6 +906,30 @@ pub(crate) fn codex_user_message_is_injected(payload: &Value, text: &str) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mutation-based Traex rollouts store items as history_mutation appends; expansion must turn
+    /// them into parseable response_item lines without touching classic records or other operations.
+    #[test]
+    fn codex_mutation_rollouts_expand_into_response_items() {
+        let mutation = r#"{"timestamp":"2026-10-29T13:40:59Z","ordinal":1695,"type":"history_mutation","payload":{"version":1,"turn_id":"t1","operation":"append","items":[{"type":"message","id":"m1","role":"user","content":[{"type":"input_text","text":"how do refunds work"}]},{"type":"function_call","name":"Bash","arguments":"{}","call_id":"c1"},{"type":"message","id":"m2","role":"assistant","content":[{"type":"output_text","text":"refund rules follow"}]}]}}"#;
+        let classic = r#"{"timestamp":"2026-10-28T08:00:00Z","ordinal":0,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"开头"}]}}"#;
+        let truncate = r#"{"type":"history_mutation","payload":{"operation":"truncate","items":[]}}"#;
+        let content = format!("{classic}\n{mutation}\n{truncate}\n");
+
+        let expanded = expand_codex_rollout_mutations(&content);
+        assert!(expanded.contains("\"how do refunds work\""));
+        assert!(expanded.contains("\"refund rules follow\""));
+        assert!(expanded.contains("\"call_id\":\"c1\""));
+        // Classic records pass through byte-identically and non-append mutations are not expanded.
+        assert!(expanded.lines().any(|l| l == classic));
+        assert!(expanded.lines().any(|l| l == truncate));
+        // Idempotent: expanding already-expanded content changes nothing.
+        let twice = expand_codex_rollout_mutations(&expanded);
+        assert_eq!(twice.as_ref(), expanded.as_ref());
+        // No-mutation content is returned untouched without copying.
+        let plain = "plain\n";
+        assert!(matches!(expand_codex_rollout_mutations(plain), std::borrow::Cow::Borrowed(_)));
+    }
 
     #[test]
     fn native_pi_shell_export_preserves_output_and_execution_metadata() {

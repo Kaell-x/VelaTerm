@@ -921,7 +921,7 @@ pub fn current_turn_stats(kind: SessionKind, agent_session_id: &str) -> Result<T
         entry.path = if kind == SessionKind::Claude {
             resume::find_claude_transcript(agent_session_id)
         } else {
-            resume::find_codex_rollout(kind, agent_session_id)
+            resume::find_codex_rollout_tip(kind, agent_session_id)
         }
         .ok_or("Agent transcript not found")?;
         entry.offset = 0;

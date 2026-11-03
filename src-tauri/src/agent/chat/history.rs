@@ -501,7 +501,7 @@ pub fn translation_aliases(kind: SessionKind, agent_session_id: &str) -> Result<
     }
     let path=if kind==SessionKind::Claude {
         resume::find_claude_transcript(agent_session_id).ok_or("Claude transcript file not found")?
-    } else {resume::find_codex_rollout(kind, agent_session_id).ok_or("Codex-family rollout file not found")?};
+    } else {resume::find_codex_rollout_tip(kind, agent_session_id).ok_or("Codex-family rollout file not found")?};
     let before=std::fs::metadata(&path).ok().and_then(|m|m.modified().ok().map(|modified|(m.len(),modified)));
     let aliases=if kind==SessionKind::Claude {
         claude_translation_aliases(&resume::read_claude_transcript(agent_session_id)?)

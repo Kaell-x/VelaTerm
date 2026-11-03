@@ -65,7 +65,7 @@ pub fn context_info(kind: SessionKind, agent_session_id: &str) -> Result<AgentCo
     if kind == SessionKind::Kiro { return super::kiro_info::context_info(agent_session_id); }
     if kind.is_codex_family() {
         let path =
-            resume::find_codex_rollout(kind, agent_session_id).ok_or("Codex rollout file not found")?;
+            resume::find_codex_rollout_tip(kind, agent_session_id).ok_or("Codex rollout file not found")?;
         let tail = read_tail(&path, CONTEXT_TAIL_BYTES)?;
         return Ok(last_codex_context_info(&tail));
     }
@@ -795,7 +795,7 @@ pub(crate) struct Piece {
 pub fn source_path(kind: SessionKind, agent_session_id: &str) -> Option<std::path::PathBuf> {
     match kind {
         SessionKind::Claude => resume::find_claude_transcript(agent_session_id),
-        SessionKind::Codex | SessionKind::Traex => resume::find_codex_rollout(kind, agent_session_id),
+        SessionKind::Codex | SessionKind::Traex => resume::find_codex_rollout_tip(kind, agent_session_id),
         SessionKind::Grok => resume::find_grok_updates(agent_session_id),
         SessionKind::Antigravity => crate::agent::antigravity::transcript_path(agent_session_id),
         SessionKind::Kimi => super::kimi_store::source_path(agent_session_id),
@@ -810,7 +810,11 @@ pub fn source_path(kind: SessionKind, agent_session_id: &str) -> Option<std::pat
 pub fn read_at(kind: SessionKind, path: &Path) -> Result<Vec<TranscriptMessage>, String> {
     match kind {
         SessionKind::Claude => parse_file(path, parse_claude_line),
-        SessionKind::Codex | SessionKind::Traex => parse_file(path, parse_codex_line),
+        SessionKind::Codex | SessionKind::Traex => {
+            let content = crate::agent::history_store::compat::read_path(path)?;
+            let content = crate::agent::export::expand_codex_rollout_mutations(&content);
+            Ok(merge(content.lines().filter_map(parse_codex_line)))
+        }
         SessionKind::Grok => parse_grok_file(path),
         SessionKind::Pi | SessionKind::Omp => parse_pi_file(path),
         SessionKind::Antigravity => {
@@ -895,6 +899,7 @@ pub fn read(kind: SessionKind, agent_session_id: &str) -> Result<Vec<TranscriptM
         }
         SessionKind::Codex | SessionKind::Traex => {
             let (_, content) = resume::read_codex_rollout_chain(kind, agent_session_id)?;
+            let content = crate::agent::export::expand_codex_rollout_mutations(&content);
             Ok(merge(content.lines().filter_map(parse_codex_line)))
         }
         SessionKind::Opencode => {

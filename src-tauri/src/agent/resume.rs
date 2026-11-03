@@ -1004,17 +1004,81 @@ pub(crate) fn claude_active_branch(content: &str) -> String {
         .join("\n")
 }
 
-/// Locates a Codex-family rollout by agent session ID under the product's own sessions root.
+/// Locates a Codex-family rollout by agent session ID under the product's own sessions root. This is
+/// the raw segment lookup: it resolves any id to exactly its own file and must stay that way because
+/// fork-ancestry resolution looks parents up through it. Entry points that want the live conversation
+/// anchor at the fork chain's tip via `find_codex_rollout_tip`.
 pub fn find_codex_rollout(kind: SessionKind, id: &str) -> Option<PathBuf> {
     let sessions = codex_home_for(kind)?.join("sessions");
     find_codex_rollout_in(&sessions, id)
+}
+
+/// Reads only the leading `session_meta` of a rollout, which is always its first record, so even very
+/// large files cost a single line. Returns the thread id, the creation stamp carried in the file name,
+/// the first ordinal, and — when this rollout continues a fork — the parent thread named by
+/// `history_base`.
+fn rollout_thread_head(path: &Path) -> Option<(String, String, u64, Option<String>)> {
+    use std::io::BufRead;
+    let name = path.file_name()?.to_str()?;
+    if !name.starts_with("rollout-") { return None; }
+    let stamp = name.get("rollout-".len()..)?.get(..19)?.to_string();
+    let mut line = String::new();
+    if std::io::BufReader::new(std::fs::File::open(path).ok()?).read_line(&mut line).ok()? == 0 {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(line.trim_end()).ok()?;
+    if value["type"].as_str() != Some("session_meta") { return None; }
+    let payload = &value["payload"];
+    let id = payload["id"].as_str()?.to_owned();
+    let ordinal = value["ordinal"].as_u64().unwrap_or(0);
+    let parent = payload["history_base"].get("thread_id")
+        .or_else(|| payload["history_base"].get("threadId"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    Some((id, stamp, ordinal, parent))
+}
+
+/// Resolves any rollout id to the tip of its fork chain.
+///
+/// A resume can continue the thread's latest fork in place: the agent keeps answering with the
+/// requested anchor id while appending to that fork's rollout, so the recorded id goes stale and
+/// reads anchored at it silently drop every segment written after the fork. Each rollout's leading
+/// session_meta names its parent thread, so the tip is found by following the latest-created child;
+/// the full ancestry is then read through the ordinary `history_base` resolution. Sibling forks (the
+/// same base resumed into different conversations) pick the most recently created branch, matching
+/// the agent's own continuation rule.
+fn resolve_codex_tip_in(sessions: &Path, id: &str) -> String {
+    let mut children: HashMap<String, Vec<(String, u64, String)>> = HashMap::new();
+    for path in walk_jsonl(sessions) {
+        let Some((child, stamp, ordinal, Some(parent))) = rollout_thread_head(&path) else { continue };
+        children.entry(parent).or_default().push((stamp, ordinal, child));
+    }
+    let mut tip = id.to_owned();
+    let mut seen = HashSet::new();
+    seen.insert(tip.clone());
+    while let Some(candidates) = children.get(&tip) {
+        let Some((_, _, next)) = candidates.iter().max() else { break };
+        if !seen.insert(next.clone()) { break; }
+        tip = next.clone();
+    }
+    tip
+}
+
+/// Like [`find_codex_rollout`], but anchored at the tip of the thread's fork chain: readings that
+/// want the live conversation (context usage, turn stats, transcript views) must not stop at a stale
+/// anchor whose continuation lives in a fork rollout.
+pub fn find_codex_rollout_tip(kind: SessionKind, id: &str) -> Option<PathBuf> {
+    let sessions = codex_home_for(kind)?.join("sessions");
+    let tip = resolve_codex_tip_in(&sessions, id);
+    find_codex_rollout_in(&sessions, &tip)
 }
 
 /// Read the logical Codex-family rollout, following paginated fork ancestry.
 ///
 /// A `thread/fork` rollout stores only its own suffix. The preceding turns remain in the parent file and
 /// are referenced by `session_meta.payload.history_base`; reading only the child therefore makes the view,
-/// export, and rewind targets lose everything before the fork after a process restart.
+/// export, and rewind targets lose everything before the fork after a process restart. The read is
+/// anchored at the fork chain's tip so a stale anchor id does not lose everything after it either.
 pub(crate) fn read_codex_rollout_chain(kind: SessionKind, id: &str) -> Result<(PathBuf, String), String> {
     let sessions = codex_home_for(kind)
         .ok_or("Codex-family home directory not found")?
@@ -1023,8 +1087,9 @@ pub(crate) fn read_codex_rollout_chain(kind: SessionKind, id: &str) -> Result<(P
 }
 
 fn read_codex_rollout_chain_in(sessions: &Path, id: &str) -> Result<(PathBuf, String), String> {
-    let path = find_codex_rollout_in(sessions, id).ok_or("Codex rollout file not found")?;
-    let resolved=crate::agent::history_store::source::resolve_codex(id,&|id|find_codex_rollout_in(sessions,id))?;
+    let tip = resolve_codex_tip_in(sessions, id);
+    let path = find_codex_rollout_in(sessions, &tip).ok_or("Codex rollout file not found")?;
+    let resolved=crate::agent::history_store::source::resolve_codex(&tip,&|id|find_codex_rollout_in(sessions,id))?;
     if let Some(error)=resolved.error {return Err(error);}
     let content=crate::agent::history_store::compat::read_segments(&resolved.segments)?;
     Ok((path,content))
@@ -1624,6 +1689,48 @@ mod tests {
         assert_eq!(repo::get_session(&conn, &session.id).unwrap().unwrap().kind, SessionKind::Traex);
         let (_, content) = read_codex_rollout_chain_in(&root, id).unwrap();
         assert!(content.contains("Restored"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A resume that continues an existing fork in place leaves the recorded id at the pre-fork
+    /// anchor while newer turns land in a fork rollout. Reading from the anchor must resolve to the
+    /// latest-created fork and include the whole ancestry; a session that recorded its own fork id
+    /// must keep reading exactly its own branch.
+    #[test]
+    fn stale_anchor_resolves_to_latest_fork_without_mixing_sibling_branches() {
+        let root = std::env::temp_dir().join(format!("vlx-fork-tip-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let meta = |id: &str, ordinal: u64, base: Option<(&str, u64, u64)>| {
+            let history_base = base.map(|(parent, ord, bytes)| {
+                format!(",\"history_base\":{{\"thread_id\":\"{parent}\",\"end_ordinal_exclusive\":{ord},\"end_byte_offset\":{bytes}}}")
+            }).unwrap_or_default();
+            format!("{{\"timestamp\":\"2026-10-28T08:00:00Z\",\"ordinal\":{ordinal},\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"source\":\"app-server\"{history_base}}}}}\n")
+        };
+        let text = |ordinal: u64, word: &str| {
+            format!("{{\"timestamp\":\"2026-10-28T08:01:00Z\",\"ordinal\":{ordinal},\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"{word}\"}}]}}}}\n")
+        };
+        let anchor = root.join("rollout-2026-10-28T16-00-38-anchor.jsonl");
+        write_file(&anchor, &(meta("anchor", 0, None) + &text(1, "SegmentA")));
+        let anchor_bytes = std::fs::metadata(&anchor).unwrap().len();
+        // Two sibling forks of the same anchor: the agent continues the later-created one in place.
+        let fork_a = root.join("rollout-2026-10-29T16-24-12-fork_a.jsonl");
+        write_file(&fork_a, &(meta("fork_a", 2, Some(("anchor", 2, anchor_bytes))) + &text(3, "SegmentB")));
+        let fork_b = root.join("rollout-2026-10-29T21-40-58-fork_b.jsonl");
+        write_file(&fork_b, &(meta("fork_b", 2, Some(("anchor", 2, anchor_bytes))) + &text(3, "SegmentC")));
+
+        assert_eq!(resolve_codex_tip_in(&root, "anchor"), "fork_b");
+        assert_eq!(resolve_codex_tip_in(&root, "fork_a"), "fork_a");
+        assert_eq!(resolve_codex_tip_in(&root, "missing"), "missing");
+
+        let (path, content) = read_codex_rollout_chain_in(&root, "anchor").unwrap();
+        assert!(path.file_name().unwrap().to_str().unwrap().contains("fork_b"));
+        assert!(content.contains("SegmentA"), "parent segment before the fork is included");
+        assert!(content.contains("SegmentC"), "the latest fork's segment is included");
+        assert!(!content.contains("SegmentB"), "the sibling branch is not mixed in");
+
+        let (_, own) = read_codex_rollout_chain_in(&root, "fork_a").unwrap();
+        assert!(own.contains("SegmentA") && own.contains("SegmentB"));
+        assert!(!own.contains("SegmentC"));
         let _ = std::fs::remove_dir_all(root);
     }
 
