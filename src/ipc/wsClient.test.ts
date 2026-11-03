@@ -8,7 +8,7 @@
 //! (echoing keys for locale independence) and the request-error log are mocked.
 
 import nacl from "tweetnacl";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../i18n", () => ({
   // Echo key and argument so assertions are locale-independent.
@@ -351,5 +351,102 @@ describe("wsClient reconnect backoff", () => {
     backoff.goOnline(ws);
     vi.advanceTimersByTime(10_000);
     expect(backoff.reconnectAttempts).toBe(0);
+  });
+});
+
+describe("wsClient connect timeout", () => {
+  type TimeoutInternals = ReconnectInternals & {
+    reconnectAttempts: number;
+    reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  };
+  const timeout = wsClient as unknown as TimeoutInternals;
+  const realWebSocket = globalThis.WebSocket;
+
+  // Earlier describes leave their directly-constructed sockets in the shared `created` list.
+  beforeEach(() => {
+    created = [];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    globalThis.WebSocket = realWebSocket;
+    created = [];
+    timeout.ws = null;
+    timeout.password = "";
+    timeout.pairing = null;
+    timeout.everConnected = false;
+    timeout.connectPromise = null;
+    timeout.reconnectAttempts = 0;
+    timeout.reconnectTimer = undefined;
+  });
+
+  it("abandons a hung handshake and keeps the reconnect loop alive", async () => {
+    vi.useFakeTimers();
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    timeout.pairing = { token: "device-token", serverPub: new Uint8Array(32) };
+    timeout.password = "pw";
+    const states: string[] = [];
+    const unsubscribe = wsClient.onConnState((state) => states.push(state));
+    const ensured = timeout.ensure().then(
+      () => null,
+      (e: Error) => e,
+    );
+    const a = created[0];
+    expect(a.readyState).toBe(FakeWebSocket.CONNECTING);
+    // The handshake never completes: the socket must be closed and the pending connect released…
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(a.closeCalls).toBe(1);
+    expect(await ensured).toBeInstanceOf(Error);
+    // …and the onclose it triggers must schedule another attempt instead of stalling the loop, which
+    // is the wedge that left SSH remote windows unrecoverable until the window was closed.
+    a.readyState = FakeWebSocket.CLOSED;
+    a.onclose?.();
+    expect(timeout.reconnectAttempts).toBe(1);
+    expect(states).toContain("offline");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(created.length).toBe(2);
+    unsubscribe();
+  });
+
+  it("clears the handshake timer once the socket opens", () => {
+    vi.useFakeTimers();
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    timeout.pairing = { token: "device-token", serverPub: new Uint8Array(32) };
+    timeout.password = "pw";
+    void timeout.ensure().catch(() => {});
+    const a = created[0];
+    a.readyState = FakeWebSocket.OPEN;
+    a.onopen?.();
+    vi.advanceTimersByTime(30_000);
+    expect(a.closeCalls).toBe(0);
+  });
+
+  it("times out a hung /api/me probe and keeps backing off", async () => {
+    vi.useFakeTimers();
+    const probes: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: unknown, opts: { signal?: AbortSignal }) => {
+        probes.push(url);
+        return new Promise((_, reject) => {
+          opts.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      }),
+    );
+    const states: string[] = [];
+    const unsubscribe = wsClient.onConnState((state) => states.push(state));
+    try {
+      wsClient.reconnectNow();
+      expect(probes).toHaveLength(1);
+      // The probe hangs: the abort must land and the loop must schedule the next try.
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(probes).toHaveLength(1);
+      expect(timeout.reconnectAttempts).toBe(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(probes).toHaveLength(2);
+      expect(states.filter((s) => s === "offline").length).toBeGreaterThanOrEqual(1);
+    } finally {
+      unsubscribe();
+    }
   });
 });

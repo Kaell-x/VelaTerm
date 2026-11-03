@@ -1877,8 +1877,10 @@ pub fn disconnect(host: &str, session: &str, kill_remote: bool) {
 // therefore monitors its tunnel child and local port. A dead child alone is insufficient because the
 // master may still own a healthy forwarding listener; rebuild only when the port is also dead. Recreate
 // authentication, verify the persistent remote service, and reopen the **same local port** so origin and
-// WebSocket recovery remain transparent. Debounce warnings until the first failure, back off with a cap,
-// and wait for a manual kick after giving up. russh uses in-process forwarding and has no registered child.
+// WebSocket recovery remain transparent. Debounce warnings until the first failure and back off with a
+// cap; after giving up, a manual kick stays the fast path and a slow background retry recovers on its
+// own. russh uses in-process forwarding and has no registered child, so the healthy phase falls back to
+// port health, and a dead russh port is rebuilt through OpenSSH the same way.
 
 /// Tunnel-monitor control: wanted keeps it alive; kick requests a manual rebuild.
 struct TunnelCtl {
@@ -2021,8 +2023,11 @@ pub fn watch_tunnel(
                 let Some(map) = SERVE_PROCS.get() else { return };
                 let mut map = map.lock().unwrap();
                 match map.get_mut(&session) {
-                    // No child means russh forwarding or disconnected cleanup; stop monitoring.
-                    None => return,
+                    // No child (russh forwarding, or the entry vanished while the session lives): fall
+                    // through to the port/kick checks below instead of exiting. Exiting here left the
+                    // ctl registered, so later kicks silently did nothing while a dead port was never
+                    // rebuilt. A rebuild falls back to OpenSSH, which also recovers a dead russh tunnel.
+                    None => true,
                     Some(child) => !matches!(child.try_wait(), Ok(None)),
                 }
             };
@@ -2071,24 +2076,30 @@ pub fn watch_tunnel(
                 continue;
             }
 
-            // ── Automatic recovery exhausted: enter down state and await a manual kick ──
+            // ── Automatic recovery exhausted: enter down state and await kick or a slow retry ──
             notify("down");
+            // A manual kick stays the fast path; the background retry recovers on its own after a long
+            // outage (sleep, VPN) instead of leaving the banner red until the user acts.
+            let mut retry_deadline = Instant::now() + Duration::from_secs(60);
             loop {
                 if !sleep_wanted(&ctl, Duration::from_millis(500)) {
                     return;
                 }
-                if !ctl.kick.swap(false, Ordering::SeqCst) {
+                let kicked = ctl.kick.swap(false, Ordering::SeqCst);
+                if !kicked && Instant::now() < retry_deadline {
                     continue;
                 }
+                retry_deadline = Instant::now() + Duration::from_secs(60);
+                let reason = if kicked { "kick" } else { "background" };
                 notify("reconnecting");
                 match rebuild_tunnel(&host, &session, &identifier, local_port) {
                     Ok(()) => {
-                        crate::diagnostic_warn!("[ssh] tunnel for {host} rebuilt on port {local_port} (manual)");
+                        crate::diagnostic_warn!("[ssh] tunnel for {host} rebuilt on port {local_port} ({reason})");
                         notify("up");
                         break;
                     }
                     Err(RebuildErr::Fatal(e)) | Err(RebuildErr::Retryable(e)) => {
-                        crate::diagnostic_warn!("[ssh] manual tunnel rebuild failed: {e}");
+                        crate::diagnostic_warn!("[ssh] {reason} tunnel rebuild failed: {e}");
                         notify("down");
                     }
                 }

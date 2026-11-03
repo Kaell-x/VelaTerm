@@ -1149,8 +1149,8 @@ pub async fn ssh_connect(
 
     let session = r.session.clone();
     // Monitor the `ssh -N -L` child and rebuild on its original port after network/sleep/VPN loss so
-    // WebSocket reconnection recovers transparently. After repeated failure, emit down for the banner
-    // and wait for a vlx://ssh-reconnect user kick.
+    // WebSocket reconnection recovers transparently. After repeated failure, emit down for the banner;
+    // a vlx://ssh-reconnect user kick retries immediately and a slow background retry covers long outages.
     {
         let app_tun = app.clone();
         let session_tun = session.clone();

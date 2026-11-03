@@ -63,6 +63,17 @@ const RECONNECT_MAX_MS = 30_000;
 const RECONNECT_STABLE_MS = 10_000;
 
 /**
+ * Hard bound for the WebSocket handshake. A socket that neither opens nor closes within this window
+ * — the local forwarder accepted TCP but the tunnel blackholes the upgrade, for example — would pin
+ * connectPromise forever and stall every later reconnect attempt: nothing else closes a CONNECTING
+ * socket, and idle detection only starts after goOnline. Well under the 75s idle timeout.
+ */
+const CONNECT_TIMEOUT_MS = 10_000;
+/** Bound for the /api/me reconnect probe; browser fetch has no timeout of its own, and a hung probe
+ * would stall the backoff loop before it even reaches the socket attempt. */
+const PROBE_TIMEOUT_MS = 8_000;
+
+/**
  * The server sends an application-level `{"t":"ping"}` text-frame heartbeat every 30s because
  * browser JavaScript cannot observe protocol-level Ping/Pong frames. A healthy connection should
  * therefore never be quiet longer than that. After 75s (2.5 heartbeat intervals) without inbound
@@ -439,7 +450,18 @@ class WsClient {
       this.supersede(this.ws);
       this.ws = ws;
       this.historyProtocol = null;
+      // Bound the handshake: a CONNECTING socket that never opens must not pin connectPromise, or
+      // every later reconnect dead-stalls on it (ensure/reconnectNow return the pending promise, and
+      // nothing else closes a connecting socket). close() drives the normal onclose path, which
+      // clears the promise and schedules the next backoff attempt.
+      const connectTimer = setTimeout(() => {
+        if (this.ws !== ws) return;
+        this.pendingConnect?.reject(new TransportError(t("transport.wsConnectFailed")));
+        this.pendingConnect = null;
+        ws.close();
+      }, CONNECT_TIMEOUT_MS);
       ws.onopen = () => {
+        clearTimeout(connectTimer);
         if (this.ws !== ws) {
           ws.close();
           return;
@@ -467,6 +489,7 @@ class WsClient {
         this.onMessage(ev);
       };
       ws.onclose = (event) => {
+        clearTimeout(connectTimer);
         // A superseded socket closing is expected and owns none of the state below; the live socket
         // drives reconnection. Reacting here would clear the new connection's keys mid-handshake.
         if (this.ws !== ws) return;
@@ -632,16 +655,22 @@ class WsClient {
       void this.ensure().catch(() => {});
       return;
     }
+    const probe = new AbortController();
+    const probeTimer = setTimeout(() => probe.abort(), PROBE_TIMEOUT_MS);
     try {
-      const r = await fetch(apiUrl("/api/me"), { headers: this.authHeaders() });
+      const r = await fetch(apiUrl("/api/me"), { headers: this.authHeaders(), signal: probe.signal });
       if (r.status === 401 || r.status === 403) {
         for (const cb of this.authLostCbs) cb();
         return;
       }
     } catch {
+      // Abort means the probe hung; a network error means the server is unreachable. Either way the
+      // loop must keep backing off instead of stalling on a fetch that may never settle.
       this.emitConnState("offline");
       this.scheduleReconnect();
       return;
+    } finally {
+      clearTimeout(probeTimer);
     }
     void this.ensure().catch(() => {});
   }
