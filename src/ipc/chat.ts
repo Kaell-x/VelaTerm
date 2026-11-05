@@ -392,6 +392,17 @@ export interface ChatApiRetry {
   message: string;
 }
 
+/** Traex's provider-capacity wait; independent of queued composer messages. */
+export interface ChatModelQueueStatus {
+  threadId: string;
+  turnId: string;
+  state: "queued" | "waiting";
+  position?: number;
+  message?: string;
+  operation?: string;
+  modelQuotaLowPriority: boolean;
+}
+
 /** What Claude's protocol reports about the process beyond the conversation itself. Replaced whole. */
 export interface ChatAuthState {
   status: "required" | "starting" | "pending" | "submitting" | "canceling" | "success" | "failed" | "canceled" | "signingOut" | "signedOut" | "logoutFailed";
@@ -426,6 +437,7 @@ export interface ChatExtras {
   backgroundTasks?: ChatBackgroundTask[];
   fastMode?: boolean;
   apiRetry?: ChatApiRetry;
+  modelQueue?: ChatModelQueueStatus;
   /** Claude: the installed CLI predates live model listing, so the model menu shows the built-in catalogue. */
   listModelsUnsupported?: boolean;
 }
@@ -565,6 +577,7 @@ export interface ChatSnapshot {
   backgroundTasks?: ChatBackgroundTask[];
   fastMode?: boolean;
   apiRetry?: ChatApiRetry;
+  modelQueue?: ChatModelQueueStatus;
   listModelsUnsupported?: boolean;
 }
 
@@ -591,6 +604,7 @@ export function extrasOf(snapshot: ChatSnapshot): ChatExtras {
     backgroundTasks: snapshot.backgroundTasks,
     fastMode: snapshot.fastMode,
     apiRetry: snapshot.apiRetry,
+    modelQueue: snapshot.modelQueue,
     listModelsUnsupported: snapshot.listModelsUnsupported,
   };
 }

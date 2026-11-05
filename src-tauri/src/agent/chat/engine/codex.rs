@@ -122,6 +122,19 @@ pub(super) fn handle_notification(
     params: &Value,
 ) -> bool {
     match method {
+        "queue/status" => {
+            let Some(status) = codex_protocol::model_queue_status(params) else { return true };
+            if !proc.turn.lock().unwrap().running { return true; }
+            if proc.current_turn.lock().unwrap().as_deref().is_some_and(|turn| turn != status.turn_id) {
+                return true;
+            }
+            let next = (status.state != "ready").then_some(status);
+            let changed = {
+                let mut extras = proc.extras.lock().unwrap();
+                if extras.model_queue == next { false } else { extras.model_queue = next; true }
+            };
+            if changed { emit_extras(app, session_id, proc); }
+        }
         "error" => {
             if let Some(error) = params.get("error") { super::auth::require(app, session_id, proc, error); }
             let message = params.get("error").map(error_text).unwrap_or_else(|| "Codex reported an error".into());

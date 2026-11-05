@@ -2304,6 +2304,10 @@ const ja: typeof en = {
   "chat.tasks.result": "結果",
   "chat.tasks.agentState.start": "実行中",
   "chat.tasks.agentState.done": "完了",
+  "chat.modelQueue.waiting": "モデルの順番待ち",
+  "chat.modelQueue.compaction": "コンテキスト圧縮の順番待ち",
+  "chat.modelQueue.position": (position: number) => `待ち順: ${position}`,
+  "chat.modelQueue.lowPriority": "モデルの利用枠が少ないため、このリクエストの優先度が下がっています。",
   "chat.retry.line": (attempt: number, max: number, seconds: number, message: string) =>
     `${seconds} 秒後に再試行します（${attempt}/${max}）: ${message}`,
   "chat.notify.dismiss": "閉じる",

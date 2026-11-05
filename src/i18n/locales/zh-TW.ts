@@ -2255,6 +2255,10 @@ const zhTW: typeof en = {
   "chat.tasks.result": "結果",
   "chat.tasks.agentState.start": "執行中",
   "chat.tasks.agentState.done": "已完成",
+  "chat.modelQueue.waiting": "模型排隊中",
+  "chat.modelQueue.compaction": "上下文壓縮排隊中",
+  "chat.modelQueue.position": (position: number) => `排隊位置：${position}`,
+  "chat.modelQueue.lowPriority": "模型額度不足，此請求以較低優先順序排隊。",
   "chat.retry.line": (attempt: number, max: number, seconds: number, message: string) =>
     `${seconds} 秒後重試（${attempt}/${max}）：${message}`,
   "chat.notify.dismiss": "關閉",

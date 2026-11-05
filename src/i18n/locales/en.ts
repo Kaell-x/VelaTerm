@@ -2315,6 +2315,10 @@ const en = {
   "chat.tasks.agentState.start": "Running",
   "chat.tasks.agentState.done": "Done",
   // ── A failed API call being retried, and a notification from the agent ──
+  "chat.modelQueue.waiting": "Waiting for model",
+  "chat.modelQueue.compaction": "Waiting to compact context",
+  "chat.modelQueue.position": (position: number) => `Queue position: ${position}`,
+  "chat.modelQueue.lowPriority": "Model quota is low; this request has lower priority.",
   "chat.retry.line": (attempt: number, max: number, seconds: number, message: string) =>
     `Retrying (${attempt}/${max}) in ${seconds} s: ${message}`,
   "chat.notify.dismiss": "Dismiss",

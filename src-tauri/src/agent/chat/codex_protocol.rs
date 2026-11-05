@@ -5,7 +5,7 @@
 //! `codex_models`. Keeping the JSON here makes protocol changes reviewable without mixing them with UI
 //! state.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::protocol::ChatImage;
@@ -24,6 +24,29 @@ pub enum Incoming {
     },
     Notification { method: String, params: Value },
     Other,
+}
+
+/// Provider capacity reported by Traex, separate from messages waiting in VelaTerm's own queue.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelQueueStatus {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub state: String,
+    #[serde(default)]
+    pub model_quota_low_priority: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+pub fn model_queue_status(params: &Value) -> Option<ModelQueueStatus> {
+    let status: ModelQueueStatus = serde_json::from_value(params.clone()).ok()?;
+    (matches!(status.state.as_str(), "queued" | "waiting" | "ready")
+        && !status.thread_id.is_empty() && !status.turn_id.is_empty()).then_some(status)
 }
 
 /// One collaboration preset reported by the installed Codex app-server.
@@ -501,6 +524,27 @@ fn question_response(request: &Value, allow: bool, updated_input: Option<&Value>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_queue_accepts_real_traex_frames_and_optional_details() {
+        let queued = model_queue_status(&json!({
+            "threadId":"thread", "turnId":"turn", "state":"queued",
+            "operation":null, "position":null, "message":null, "modelQuotaLowPriority":false
+        })).unwrap();
+        assert_eq!(queued.position, None);
+        let waiting = model_queue_status(&json!({
+            "threadId":"thread", "turnId":"turn", "state":"waiting", "position":311,
+            "message":"Too many current requests. Your queue position is 311. Please wait for a while.",
+            "operation":"contextCompaction", "modelQuotaLowPriority":true
+        })).unwrap();
+        assert_eq!(waiting.position, Some(311));
+        assert_eq!(waiting.operation.as_deref(), Some("contextCompaction"));
+        assert!(waiting.model_quota_low_priority);
+        assert_eq!(serde_json::to_value(waiting).unwrap()["position"], 311);
+        assert!(model_queue_status(&json!({"threadId":"thread","turnId":"turn","state":"ready"})).is_some());
+        assert!(model_queue_status(&json!({"state":"waiting"})).is_none());
+        assert!(model_queue_status(&json!({"threadId":"thread","turnId":"turn","state":"unknown"})).is_none());
+    }
 
     #[test]
     fn turn_carries_text_images_model_effort_and_safe_policy() {

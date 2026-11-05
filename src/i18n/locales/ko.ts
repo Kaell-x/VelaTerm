@@ -2287,6 +2287,10 @@ const ko: typeof en = {
   "chat.tasks.result": "결과",
   "chat.tasks.agentState.start": "실행 중",
   "chat.tasks.agentState.done": "완료됨",
+  "chat.modelQueue.waiting": "모델 대기 중",
+  "chat.modelQueue.compaction": "컨텍스트 압축 대기 중",
+  "chat.modelQueue.position": (position: number) => `대기 순서: ${position}`,
+  "chat.modelQueue.lowPriority": "모델 할당량이 부족하여 이 요청의 우선순위가 낮습니다.",
   "chat.retry.line": (attempt: number, max: number, seconds: number, message: string) =>
     `${seconds}초 후 다시 시도합니다(${attempt}/${max}): ${message}`,
   "chat.notify.dismiss": "닫기",

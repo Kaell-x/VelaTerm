@@ -883,6 +883,9 @@ pub struct ClaudeExtras {
     /// A failed API call being retried right now; cleared by the next frame that says the call went through.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_retry: Option<Value>,
+    /// Traex's provider-capacity wait, retained for clients reopening or reconnecting to the session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_queue: Option<codex_protocol::ModelQueueStatus>,
     /// The model named by the last assistant frame, which is the key into `modelUsage` at turn end.
     #[serde(skip)]
     pub usage_model: Option<String>,
@@ -5068,6 +5071,9 @@ fn handle_codex_notification(
         }
         "turn/started" => {
             if let Some(id) = params.pointer("/turn/id").and_then(Value::as_str) {
+                let stale_queue = proc.extras.lock().unwrap().model_queue.as_ref()
+                    .is_some_and(|queue| queue.turn_id != id);
+                if stale_queue { clear_model_queue(app, session_id, proc); }
                 *proc.current_turn.lock().unwrap() = Some(id.to_string());
                 for row_id in proc.pending_user_rows.lock().unwrap().drain(..) {
                     proc.user_targets.lock().unwrap().entry(row_id).or_insert(
@@ -5747,6 +5753,7 @@ fn finish_turn_end(
     reported_duration_ms: Option<u64>,
     end: TurnEnd,
 ) {
+    clear_model_queue(app, session_id, proc);
     let completed_at = now_ms();
     let TurnEnd { next, interrupted, started_at, background } = end;
     if let Some(duration_ms) = reported_duration_ms.or_else(|| {
@@ -6602,6 +6609,11 @@ fn clear_api_retry(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>) {
     }
 }
 
+fn clear_model_queue(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>) {
+    let cleared = proc.extras.lock().unwrap().model_queue.take().is_some();
+    if cleared { emit_extras(app, session_id, proc); }
+}
+
 /// Context carried by one assistant frame: what the API was sent, cache hits and writes included.
 fn frame_context_tokens(message: &Value) -> Option<u64> {
     let usage = message.get("usage")?;
@@ -7143,6 +7155,38 @@ mod tests {
             ChatRow::Tool { name, input, .. }
                 if name == "TodoWrite" && input["todos"][1]["status"] == "in_progress"
         ));
+    }
+
+    /// Provider waits survive reconnect snapshots without leaking between threads or past cancellation.
+    #[test]
+    fn traex_model_queue_is_in_snapshots_and_cleared_on_ready_or_turn_end() {
+        let app = ctx("traex-model-queue");
+        let proc = inert_process(SessionKind::Traex);
+        *proc.agent_session_id.lock().unwrap() = Some("thread".into());
+        *proc.current_turn.lock().unwrap() = Some("turn".into());
+        proc.turn.lock().unwrap().running = true;
+        app.chat().sessions.lock().unwrap().insert("s".into(), proc.clone());
+        let waiting = json!({"threadId":"thread","turnId":"turn","state":"waiting","position":311,
+            "message":"Too many current requests. Your queue position is 311. Please wait for a while.","modelQuotaLowPriority":false});
+        handle_codex_notification(&app, "s", &proc, "queue/status", waiting.clone());
+        assert_eq!(app.chat().snapshot("s").extras.model_queue.unwrap().position, Some(311));
+
+        handle_codex_notification(&app, "s", &proc, "queue/status",
+            json!({"threadId":"child","turnId":"child-turn","state":"waiting","position":9}));
+        handle_codex_notification(&app, "s", &proc, "queue/status",
+            json!({"threadId":"thread","turnId":"old-turn","state":"ready"}));
+        assert_eq!(proc.extras.lock().unwrap().model_queue.as_ref().unwrap().position, Some(311));
+
+        handle_codex_notification(&app, "s", &proc, "queue/status",
+            json!({"threadId":"thread","turnId":"turn","state":"ready"}));
+        assert!(app.chat().snapshot("s").extras.model_queue.is_none());
+        handle_codex_notification(&app, "s", &proc, "queue/status", waiting.clone());
+        proc.turn.lock().unwrap().interrupted = true;
+        handle_codex_notification(&app, "s", &proc, "turn/completed",
+            json!({"threadId":"thread","turn":{"id":"turn","status":"interrupted"}}));
+        assert!(app.chat().snapshot("s").extras.model_queue.is_none());
+        handle_codex_notification(&app, "s", &proc, "queue/status", waiting);
+        assert!(proc.extras.lock().unwrap().model_queue.is_none(), "late notifications cannot revive a finished turn");
     }
 
     /// A registered Codex child thread contributes steps to its Task card without changing root turn state.

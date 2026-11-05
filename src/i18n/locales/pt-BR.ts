@@ -2316,6 +2316,10 @@ const ptBR: typeof en = {
   "chat.tasks.result": "Resultado",
   "chat.tasks.agentState.start": "Em execução",
   "chat.tasks.agentState.done": "Concluído",
+  "chat.modelQueue.waiting": "Aguardando o modelo",
+  "chat.modelQueue.compaction": "Aguardando compactação do contexto",
+  "chat.modelQueue.position": (position: number) => `Posição na fila: ${position}`,
+  "chat.modelQueue.lowPriority": "A cota do modelo está baixa; esta solicitação tem prioridade reduzida.",
   "chat.retry.line": (attempt: number, max: number, seconds: number, message: string) =>
     `Nova tentativa (${attempt}/${max}) em ${seconds} s: ${message}`,
   "chat.notify.dismiss": "Fechar",

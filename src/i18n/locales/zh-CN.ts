@@ -2254,6 +2254,10 @@ const zhCN: typeof en = {
   "chat.tasks.result": "结果",
   "chat.tasks.agentState.start": "运行中",
   "chat.tasks.agentState.done": "已完成",
+  "chat.modelQueue.waiting": "模型排队中",
+  "chat.modelQueue.compaction": "上下文压缩排队中",
+  "chat.modelQueue.position": (position: number) => `排队位置：${position}`,
+  "chat.modelQueue.lowPriority": "模型额度不足，此请求以较低优先级排队。",
   "chat.retry.line": (attempt: number, max: number, seconds: number, message: string) =>
     `${seconds} 秒后重试（${attempt}/${max}）：${message}`,
   "chat.notify.dismiss": "关闭",

@@ -2,8 +2,8 @@
 //!
 //! Agents answer in Markdown, so a bubble that showed the raw text would be full of `**` and stray fences.
 //! `marked` tokenizes; this module maps the tokens straight to React nodes. Going through tokens rather than
-//! `marked.parse` keeps HTML out of the picture entirely — nothing is ever fed to `dangerouslySetInnerHTML`,
-//! so a transcript that quotes markup cannot inject anything into the app.
+//! `marked.parse` keeps transcript HTML out of the picture. Mermaid blocks use the shared sanitized-SVG
+//! renderer; ordinary Markdown never passes raw HTML into the DOM.
 //!
 //! Only what agent answers actually contain is handled. Raw HTML blocks render as their own source text,
 //! which is both honest and safe.
@@ -15,6 +15,7 @@ import { memo, type ReactNode } from "react";
 import { highlight } from "../../RightPanel/highlight";
 import { SessionLink } from "./links";
 import { CodeBlockHeader } from "./CodeBlockHeader";
+import { MermaidBlock } from "./MermaidBlock";
 import {
   codeBlockCopyAttributes,
   copyAttributes,
@@ -93,6 +94,9 @@ function Block({ token }: { token: Token }): ReactNode {
     }
     case "code": {
       const c = token as Tokens.Code;
+      if (c.lang?.trim().split(/\s+/)[0].toLowerCase() === "mermaid") {
+        return <MermaidBlock code={c.text} lang={c.lang} complete={hasClosedFence(c.raw)} />;
+      }
       return <CodeBlock code={c.text} lang={c.lang} />;
     }
     case "blockquote":
@@ -162,6 +166,16 @@ function Block({ token }: { token: Token }): ReactNode {
         </div>
       );
   }
+}
+
+/** Wait for the closing fence before parsing a diagram from a streaming answer. */
+function hasClosedFence(raw: string): boolean {
+  const opening = /^[ ]{0,3}(`{3,}|~{3,})[^\n]*\r?\n/.exec(raw);
+  if (!opening) return false;
+  const fence = opening[1];
+  const closing = new RegExp(`^[ ]{0,3}${fence[0]}{${fence.length},}[ \\t]*$`);
+  const lines = raw.slice(opening[0].length).trimEnd().split(/\r?\n/);
+  return closing.test(lines[lines.length - 1] ?? "");
 }
 
 /** A fenced code block with lightweight highlighting and its language shown when declared. */

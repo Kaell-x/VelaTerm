@@ -711,12 +711,14 @@ export function ChatPane({
         case "turnCompleted":
           stopping.current = false;
           setTurnStartedAt(undefined);
+          setExtras((prev) => ({ ...prev, modelQueue: undefined }));
           break;
         case "exited":
           stopping.current = false;
           setActionFeedback("");
           setEngineRunning(false);
           setTurnStartedAt(undefined);
+          setExtras((prev) => ({ ...prev, modelQueue: undefined }));
           // A process the application let go — its view closed here or on another device — is not
           // the agent failing; the next message simply starts it again. An agent that failed its
           // handshake has already said why. That message is the one worth keeping; the exit that
@@ -938,10 +940,10 @@ export function ChatPane({
 
   useEffect(() => {
     if (snapshotRef.current) {
-      snapshotRef.current = { ...snapshotRef.current, userMessages, auth: extras.auth, rows, queue, hasMore, hasNewer, rowsRevision: liveVersions.current.rows, queueRevision: liveVersions.current.queue };
+      snapshotRef.current = { ...snapshotRef.current, userMessages, auth: extras.auth, modelQueue: extras.modelQueue, rows, queue, hasMore, hasNewer, rowsRevision: liveVersions.current.rows, queueRevision: liveVersions.current.queue };
       cacheChat(cacheId, snapshotRef.current);
     }
-  }, [session.id, rows, userMessages, queue, hasMore, hasNewer, extras.auth, cacheId]);
+  }, [session.id, rows, userMessages, queue, hasMore, hasNewer, extras.auth, extras.modelQueue, cacheId]);
 
   const loadHistory = async (before = rows[0]?.id) => {
     if (historyRequest.current) return historyRequest.current;
@@ -2651,7 +2653,7 @@ export function ChatPane({
                   {t(historyLoading ? "common.loading" : "chat.history.newer")}
                 </a>
               </div>}
-              {turnStartedAt !== undefined && <WorkingRow startedAt={turnStartedAt} />}
+              {(turnStartedAt !== undefined || extras.modelQueue) && <WorkingRow startedAt={turnStartedAt} modelQueue={extras.modelQueue} />}
               {extras.apiRetry && <RetryLine retry={extras.apiRetry} />}
               {showAgentNotice && !readOnly && (
                 <AgentMissingNotice

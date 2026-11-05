@@ -3,8 +3,7 @@
 //!
 //! Adapted from Orca's MermaidBlock for vlx theme and security conventions:
 //! - `mermaid.render()` mutates global DOM state, including element IDs and parser state, so a
-//!   single promise chain serializes all renders. After each render the chain collapses to one
-//!   resolved promise, allowing captured source and containers to be collected.
+//!   single promise chain serializes all renders, including requests arriving while another is queued.
 //! - DOMPurify sanitizes the resulting SVG as defense in depth, even though Mermaid strict mode
 //!   already sanitizes it. This matches the image viewer's controlled-SVG policy.
 //! - Results are cached by `theme:source`, avoiding flicker and rerendering when decorations rebuild.
@@ -17,10 +16,7 @@ export type DiagramTheme = "dark" | "light";
 /** Serialize all Mermaid renders to prevent concurrent global-state mutations. */
 let queue: Promise<void> = Promise.resolve();
 function enqueue(task: () => Promise<void>): void {
-  queue = queue.then(task, task).then(() => {
-    // Collapse to a resolved promise so closures capturing source and containers can be collected.
-    queue = Promise.resolve();
-  });
+  queue = queue.then(task, task);
 }
 
 /** Rendered SVG cache keyed by `${theme}:${src}`. */
@@ -53,17 +49,17 @@ export function renderMermaid(theme: DiagramTheme, src: string): Promise<Mermaid
 
   return new Promise<MermaidResult>((resolve) => {
     enqueue(async () => {
-      // Initialize inside the serialized task so another render cannot change the theme before render().
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        // SVG text survives the SVG-only sanitizer; HTML labels use foreignObject and are removed.
-        htmlLabels: false,
-        flowchart: { htmlLabels: false },
-        theme: theme === "dark" ? "dark" : "default",
-      });
       const renderId = `vlx-mermaid-${idSeq++}`;
       try {
+        // Initialize inside the serialized task so another render cannot change its theme.
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          // SVG text survives the SVG-only sanitizer; HTML labels use foreignObject and are removed.
+          htmlLabels: false,
+          flowchart: { htmlLabels: false },
+          theme: theme === "dark" ? "dark" : "default",
+        });
         const { svg } = await mermaid.render(renderId, src);
         const clean = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true } });
         svgCache.set(key, clean);

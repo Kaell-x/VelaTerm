@@ -270,13 +270,51 @@ it("replays newer events over a late snapshot without losing history or restorin
   expect(screen.getByText("New queue")).toBeTruthy();
 });
 
-async function mountPane(kind: "claude" | "codex" | "opencode" | "antigravity" = "claude", expectedModel: string | null = "old-model", mobile = false) {
+async function mountPane(kind: "claude" | "codex" | "traex" | "opencode" | "antigravity" = "claude", expectedModel: string | null = "old-model", mobile = false) {
   const view = render(<ChatPane session={{ id: "s", projectId: "p", name: "Claude", kind, engine: "chat", collapsed: false, sortOrder: 0, createdAt: 0 }}
     area={{}} hidden={false} focused multi={false} mobile={mobile} onActivate={() => {}} onSplit={() => {}} onClose={() => {}} />);
   if (expectedModel !== null) await waitFor(() => expect((screen.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value).toBe(expectedModel));
   else await waitFor(() => expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "chat_snapshot")).toBe(true));
   return view;
 }
+
+it("restores Traex model queue status and follows position updates, readiness, and turn cancellation", async () => {
+  const modelQueue = { threadId: "thread", turnId: "turn", state: "queued" as const, modelQuotaLowPriority: false };
+  snapshotOverrides = { turnStartedAt: Date.now(), modelQueue };
+  await mountPane("traex");
+  expect(screen.getByText("Waiting for model")).toBeTruthy();
+  expect(screen.queryByText(/Queue position:/)).toBeNull();
+
+  act(() => eventCallback({ type: "extras", extras: { modelQueue: { ...modelQueue, state: "waiting", position: 311, message: "Too many current requests. Your queue position is 311." } } }));
+  expect(screen.getByText("Queue position: 311")).toBeTruthy();
+  expect(screen.getByText("Too many current requests. Your queue position is 311.")).toBeTruthy();
+  await waitFor(() => expect(cachedChat("s")?.modelQueue?.position).toBe(311));
+
+  snapshotOverrides = { turnStartedAt: Date.now(), modelQueue: { ...modelQueue, state: "waiting", position: 302 } };
+  act(() => reconnectCallback());
+  await screen.findByText("Queue position: 302");
+
+  act(() => eventCallback({ type: "extras", extras: {} }));
+  expect(screen.queryByText("Waiting for model")).toBeNull();
+  expect(screen.getByText("Working…")).toBeTruthy();
+  await waitFor(() => expect(cachedChat("s")?.modelQueue).toBeUndefined());
+
+  act(() => eventCallback({ type: "extras", extras: { modelQueue: { ...modelQueue, position: 0 } } }));
+  expect(screen.getByText("Queue position: 0")).toBeTruthy();
+  act(() => eventCallback({ type: "turnCompleted" }));
+  expect(screen.queryByText("Waiting for model")).toBeNull();
+  expect(screen.queryByText("Queue position: 0")).toBeNull();
+});
+
+it("shows model queue details for compaction on mobile and removes them on process exit", async () => {
+  const modelQueue = { threadId: "thread", turnId: "turn", state: "waiting" as const, position: 9, operation: "contextCompaction", modelQuotaLowPriority: true };
+  snapshotOverrides = { turnStartedAt: Date.now(), modelQueue };
+  await mountPane("traex", "old-model", true);
+  expect(screen.getByText("Waiting to compact context")).toBeTruthy();
+  expect(screen.getByText("Model quota is low; this request has lower priority.")).toBeTruthy();
+  act(() => eventCallback({ type: "exited", code: 0, stderr: "", released: true }));
+  expect(screen.queryByText("Waiting to compact context")).toBeNull();
+});
 
 function mockOutgoingTranslation(pending: TranslationSession["pending"] = []) {
   const settings: TranslationSettings = {

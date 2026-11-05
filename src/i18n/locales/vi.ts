@@ -2265,6 +2265,10 @@ const vi: typeof en = {
   "chat.tasks.result": "Kết quả",
   "chat.tasks.agentState.start": "Đang chạy",
   "chat.tasks.agentState.done": "Đã hoàn tất",
+  "chat.modelQueue.waiting": "Đang chờ mô hình",
+  "chat.modelQueue.compaction": "Đang chờ nén ngữ cảnh",
+  "chat.modelQueue.position": (position: number) => `Vị trí trong hàng đợi: ${position}`,
+  "chat.modelQueue.lowPriority": "Hạn mức mô hình thấp; yêu cầu này có mức ưu tiên thấp hơn.",
   "chat.retry.line": (attempt: number, max: number, seconds: number, message: string) =>
     `Thử lại (${attempt}/${max}) sau ${seconds} giây: ${message}`,
   "chat.notify.dismiss": "Đóng",

@@ -2322,6 +2322,10 @@ const fr: typeof en = {
   "chat.tasks.result": "Résultat",
   "chat.tasks.agentState.start": "En cours",
   "chat.tasks.agentState.done": "Terminé",
+  "chat.modelQueue.waiting": "En attente du modèle",
+  "chat.modelQueue.compaction": "En attente de compression du contexte",
+  "chat.modelQueue.position": (position: number) => `Position dans la file : ${position}`,
+  "chat.modelQueue.lowPriority": "Le quota du modèle est faible ; cette requête a une priorité réduite.",
   "chat.retry.line": (attempt: number, max: number, seconds: number, message: string) =>
     `Nouvelle tentative (${attempt}/${max}) dans ${seconds} s : ${message}`,
   "chat.notify.dismiss": "Fermer",

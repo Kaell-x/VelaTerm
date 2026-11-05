@@ -2311,6 +2311,10 @@ const de: typeof en = {
   "chat.tasks.result": "Ergebnis",
   "chat.tasks.agentState.start": "Läuft",
   "chat.tasks.agentState.done": "Fertig",
+  "chat.modelQueue.waiting": "Warten auf das Modell",
+  "chat.modelQueue.compaction": "Warten auf Kontextkomprimierung",
+  "chat.modelQueue.position": (position: number) => `Warteschlangenposition: ${position}`,
+  "chat.modelQueue.lowPriority": "Das Modellkontingent ist knapp; diese Anfrage hat eine niedrigere Priorität.",
   "chat.retry.line": (attempt: number, max: number, seconds: number, message: string) =>
     `Neuer Versuch (${attempt}/${max}) in ${seconds} s: ${message}`,
   "chat.notify.dismiss": "Schließen",

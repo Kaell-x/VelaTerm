@@ -844,6 +844,29 @@ a.sv-agent-version-update:hover { text-decoration: underline; }
   max-height: 420px;
   overflow: auto;
 }
+.sv-mermaid-diagram {
+  display: flex;
+  justify-content: center;
+  padding: 14px;
+  background: var(--bg-1);
+  overflow-x: auto;
+}
+.sv-mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.sv-mermaid-source > summary {
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: calc(var(--ui-fs) - 2px);
+  cursor: pointer;
+}
+.sv-mermaid-error {
+  padding: 8px 10px;
+  color: var(--red);
+  overflow-wrap: anywhere;
+}
 .sv-link {
   color: var(--accent);
   text-decoration: none;
@@ -896,6 +919,21 @@ a.sv-agent-version-update:hover { text-decoration: underline; }
   font-family: var(--chat-font);
   font-variant-numeric: tabular-nums;
   color: var(--text-faint);
+}
+
+.sv-model-queue {
+  flex-wrap: wrap;
+}
+.sv-model-queue .sv-dot {
+  flex-shrink: 0;
+}
+.sv-model-queue-message {
+  padding-left: calc(var(--sv-gutter) + var(--sv-gutter-gap));
+  margin-bottom: 8px;
+  color: var(--text-dim);
+  font-size: calc(var(--ui-fs) - 1px);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .sv-dot {
   width: 6px;

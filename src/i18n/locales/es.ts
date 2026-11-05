@@ -2319,6 +2319,10 @@ const es: typeof en = {
   "chat.tasks.result": "Resultado",
   "chat.tasks.agentState.start": "En ejecución",
   "chat.tasks.agentState.done": "Finalizado",
+  "chat.modelQueue.waiting": "Esperando al modelo",
+  "chat.modelQueue.compaction": "Esperando para compactar el contexto",
+  "chat.modelQueue.position": (position: number) => `Posición en la cola: ${position}`,
+  "chat.modelQueue.lowPriority": "La cuota del modelo es baja; esta solicitud tiene menor prioridad.",
   "chat.retry.line": (attempt: number, max: number, seconds: number, message: string) =>
     `Reintentando (${attempt}/${max}) en ${seconds} s: ${message}`,
   "chat.notify.dismiss": "Cerrar",

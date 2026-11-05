@@ -21,6 +21,7 @@ import {
   chatHistorySessionId,
   hasBoundedChatDetails,
   type ChatRow,
+  type ChatModelQueueStatus,
   type ChatImage,
   type ChatImageValue,
   type ChatRewindScope,
@@ -892,13 +893,18 @@ export function WakeRow({ summary, at }: { summary: string; at?: string | number
 }
 
 /** Shown while the agent is working, so an empty pause is distinguishable from a finished turn. */
-export function WorkingRow({ startedAt }: { startedAt?: number }) {
+export function WorkingRow({ startedAt, modelQueue }: { startedAt?: number; modelQueue?: ChatModelQueueStatus }) {
   const t = useT();
   return (
-    <div className="sv-working">
-      <span className="sv-dot" />
-      {t("session.working")}
-      {startedAt !== undefined ? <LiveTurnDuration startedAt={startedAt} /> : null}
-    </div>
+    <>
+      <div className={`sv-working${modelQueue ? " sv-model-queue" : ""}`} role={modelQueue ? "status" : undefined} aria-live={modelQueue ? "polite" : undefined}>
+        <span className="sv-dot" />
+        <span>{modelQueue ? t(modelQueue.operation === "contextCompaction" ? "chat.modelQueue.compaction" : "chat.modelQueue.waiting") : t("session.working")}</span>
+        {modelQueue?.position != null && <span>{t("chat.modelQueue.position", modelQueue.position)}</span>}
+        {startedAt !== undefined ? <LiveTurnDuration startedAt={startedAt} /> : null}
+      </div>
+      {modelQueue?.message && <div className="sv-model-queue-message">{modelQueue.message}</div>}
+      {modelQueue?.modelQuotaLowPriority && <div className="sv-model-queue-message">{t("chat.modelQueue.lowPriority")}</div>}
+    </>
   );
 }

@@ -2,6 +2,16 @@ import { expect, it } from "vitest";
 import { registerRowPositions, type ChatRow, type ChatSnapshot } from "../../../ipc/chat";
 import { cacheChat, cachedChat, clearChatCache, mergeRows, reconcileChat, limitHistoryWindow } from "./chatCache";
 
+it("keeps model queue events over a late snapshot and clears the wait on readiness, completion, and reset", () => {
+  const modelQueue = { threadId: "thread", turnId: "turn", state: "waiting" as const, position: 311, modelQuotaLowPriority: false };
+  const snapshot: ChatSnapshot = { running: true, startedAt: 100, rows: [], queue: [], permissions: [], commands: [], configKeys: [] };
+  const updated = reconcileChat(snapshot, [], [{ type: "extras", extras: { modelQueue } }]);
+  expect(updated.modelQueue).toEqual(modelQueue);
+  expect(reconcileChat(updated, [], [{ type: "extras", extras: {} }]).modelQueue).toBeUndefined();
+  expect(reconcileChat(updated, [], [{ type: "turnCompleted" }]).modelQueue).toBeUndefined();
+  expect(reconcileChat(updated, [], [{ type: "reset", epoch: 200, rows: [] }]).modelQueue).toBeUndefined();
+});
+
 const row = (id: string, position: number): ChatRow => {
   const value: ChatRow = { kind: "user", id, text: id };
   registerRowPositions([value], { [id]: position });

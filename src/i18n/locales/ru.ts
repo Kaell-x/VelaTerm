@@ -2328,6 +2328,10 @@ const ru: typeof en = {
   "chat.tasks.result": "Результат",
   "chat.tasks.agentState.start": "Выполняется",
   "chat.tasks.agentState.done": "Готово",
+  "chat.modelQueue.waiting": "Ожидание модели",
+  "chat.modelQueue.compaction": "Ожидание сжатия контекста",
+  "chat.modelQueue.position": (position: number) => `Место в очереди: ${position}`,
+  "chat.modelQueue.lowPriority": "Квота модели мала; этот запрос имеет пониженный приоритет.",
   "chat.retry.line": (attempt: number, max: number, seconds: number, message: string) =>
     `Повторная попытка (${attempt}/${max}) через ${seconds} с: ${message}`,
   "chat.notify.dismiss": "Закрыть",
